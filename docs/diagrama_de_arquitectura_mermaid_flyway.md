@@ -39,7 +39,7 @@ graph TB
 
     %% Servicios y APIs Externas
     subgraph EXTERNAL_SERVICES [" ☁️ Servicios Cloud Externos "]
-        GeminiAPI["🤖 Google Gemini API"]
+        GeminiAPI["🤖 OpenIA API"]
         OpenRouterAPI["🌐 OpenRouter API"]
         PexelsAPI["📷 Pexels API"]
     end
