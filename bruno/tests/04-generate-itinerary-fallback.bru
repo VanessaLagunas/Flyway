@@ -1,0 +1,30 @@
+meta {
+  name: 04 - Generate Itinerary Fallback
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/api/v1/itinerary/generate
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "destination": "Valparaíso",
+    "startDate": "2026-11-01",
+    "endDate": "2026-11-03",
+    "budget": "standard",
+    "interests": [
+      "cultura",
+      "gastronomia"
+    ]
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.currency: eq CLP
+  res.body.days.length: gt 0
+}

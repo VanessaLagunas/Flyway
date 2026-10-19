@@ -1,0 +1,121 @@
+services:
+  # 1. Frontend SPA (Nginx Alpine - mem_limit: 64m)
+  frontend:
+    image: ghcr.io/${GHCR_OWNER:-owner}/flyway-frontend:latest
+    container_name: flyway-frontend
+    restart: unless-stopped
+    mem_limit: 64m
+    ports:
+      - "3000:80"
+    networks:
+      - flyway-net
+    depends_on:
+      - bff-service
+
+  # 2. API Gateway BFF (Node 20 Alpine - mem_limit: 128m)
+  bff-service:
+    image: ghcr.io/${GHCR_OWNER:-owner}/flyway-bff:latest
+    container_name: flyway-bff
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      AUTH_SERVICE_URL: http://auth-service:4003
+      AI_SERVICE_URL: http://ai-service:4001
+      CATALOG_SERVICE_URL: http://catalog-service:4002
+    networks:
+      - flyway-net
+    depends_on:
+      - auth-service
+      - ai-service
+      - catalog-service
+
+  # 3. Microservicio de Autenticación Local: JWT + Bcrypt (Node 20 Alpine - mem_limit: 128m)
+  auth-service:
+    image: ghcr.io/${GHCR_OWNER:-owner}/flyway-auth-service:latest
+    container_name: flyway-auth-service
+    restart: unless-stopped
+    mem_limit: 128m
+    expose:
+      - "4003"
+    environment:
+      PORT: 4003
+      NODE_ENV: production
+      DATABASE_URL: postgres://flyway:flyway_pass@postgres-db:5432/flyway_db
+      JWT_SECRET: ${JWT_SECRET:-flyway-super-secret-jwt-key-2026}
+    networks:
+      - flyway-net
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  # 4. Microservicio IA y Fallback Local (Node 20 Alpine - mem_limit: 150m)
+  ai-service:
+    image: ghcr.io/${GHCR_OWNER:-owner}/flyway-ai-service:latest
+    container_name: flyway-ai-service
+    restart: unless-stopped
+    mem_limit: 150m
+    expose:
+      - "4001"
+    environment:
+      PORT: 4001
+      NODE_ENV: production
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    networks:
+      - flyway-net
+
+  # 5. Microservicio de Catálogo, Pexels y DB (Node 20 Alpine - mem_limit: 128m)
+  catalog-service:
+    image: ghcr.io/${GHCR_OWNER:-owner}/flyway-catalog-service:latest
+    container_name: flyway-catalog-service
+    restart: unless-stopped
+    mem_limit: 128m
+    expose:
+      - "4002"
+    environment:
+      PORT: 4002
+      NODE_ENV: production
+      DATABASE_URL: postgres://flyway:flyway_pass@postgres-db:5432/flyway_db
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+    networks:
+      - flyway-net
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  # 6. Base de Datos PostgreSQL 16 (Tuning para baja RAM - mem_limit: 180m)
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: flyway-postgres-db
+    restart: unless-stopped
+    mem_limit: 180m
+    command: postgres -c shared_buffers=32MB -c work_mem=4MB -c maintenance_work_mem=16MB -c max_connections=25
+    expose:
+      - "5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flyway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flyway_pass}
+      POSTGRES_DB: ${POSTGRES_DB:-flyway_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-flyway} -d ${POSTGRES_DB:-flyway_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flyway-net
+
+networks:
+  flyway-net:
+    name: flyway-net
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: flyway-pgdata

@@ -1,0 +1,26 @@
+{
+  "name": "@flyway/catalog-service",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Flyway catalog microservice: destinations, Pexels photos and saved itineraries over PostgreSQL (puerto 4002)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --format=cjs --external:pg-native --minify --outfile=dist/index.cjs",
+    "start": "node --max-old-space-size=96 dist/index.cjs",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.10",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Flyway",
+  "description": "Planificador de rutas e itinerarios con IA, especializado en Chile y el mundo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

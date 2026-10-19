@@ -1,0 +1,30 @@
+{
+  "name": "@flyway/auth-service",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Flyway Local Authentication Microservice: JWT + Bcrypt.js + PostgreSQL (puerto 4003)",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --format=cjs --external:pg-native --minify --outfile=dist/index.cjs",
+    "start": "node --max-old-space-size=96 dist/index.cjs",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.10",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  }
+}

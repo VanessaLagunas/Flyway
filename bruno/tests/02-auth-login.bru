@@ -1,0 +1,35 @@
+meta {
+  name: 02 - Auth Login JWT
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/auth/login
+  body: json
+  auth: none
+}
+
+body:json {
+  {
+    "email": "demo@flyway.cl",
+    "password": "flyway123"
+  }
+}
+
+vars:post-response {
+  auth_token: res.body.token
+}
+
+script:post-response {
+  if (res.body && res.body.token) {
+    bru.setEnvVar("auth_token", res.body.token);
+    bru.setVar("auth_token", res.body.token);
+  }
+}
+
+assert {
+  res.status: eq 200
+  res.body.token: isDefined
+  res.body.user.email: eq demo@flyway.cl
+}

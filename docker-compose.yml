@@ -1,0 +1,127 @@
+services:
+  # 1. Frontend SPA (React 19 + Vite + Tailwind v4 servido por Nginx en puerto 3000)
+  frontend:
+    build:
+      context: ./services/frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_BFF_URL: http://localhost:4000/api/v1
+    container_name: flyway-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    networks:
+      - flyway-net
+    depends_on:
+      - bff-service
+
+  # 2. API Gateway (BFF en Express expuesto en puerto 4000)
+  bff-service:
+    build:
+      context: ./services/bff
+      dockerfile: Dockerfile
+    container_name: flyway-bff
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      PORT: 4000
+      NODE_ENV: production
+      AUTH_SERVICE_URL: http://auth-service:4003
+      AI_SERVICE_URL: http://ai-service:4001
+      CATALOG_SERVICE_URL: http://catalog-service:4002
+    networks:
+      - flyway-net
+    depends_on:
+      - auth-service
+      - ai-service
+      - catalog-service
+
+  # 3. Microservicio de Autenticación Local: JWT + Bcrypt + Users DB (puerto interno 4003)
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    container_name: flyway-auth-service
+    restart: unless-stopped
+    expose:
+      - "4003"
+    environment:
+      PORT: 4003
+      NODE_ENV: production
+      DATABASE_URL: postgres://flyway:flyway_pass@postgres-db:5432/flyway_db
+      JWT_SECRET: ${JWT_SECRET:-flyway-super-secret-jwt-key-2026}
+    networks:
+      - flyway-net
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  # 4. Microservicio de IA y Fallback Local (puerto interno 4001)
+  ai-service:
+    build:
+      context: ./services/ai-service
+      dockerfile: Dockerfile
+    container_name: flyway-ai-service
+    restart: unless-stopped
+    expose:
+      - "4001"
+    environment:
+      PORT: 4001
+      NODE_ENV: production
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    networks:
+      - flyway-net
+
+  # 5. Microservicio de Catálogo, Pexels y Persistencia (puerto interno 4002)
+  catalog-service:
+    build:
+      context: ./services/catalog-service
+      dockerfile: Dockerfile
+    container_name: flyway-catalog-service
+    restart: unless-stopped
+    expose:
+      - "4002"
+    environment:
+      PORT: 4002
+      NODE_ENV: production
+      DATABASE_URL: postgres://flyway:flyway_pass@postgres-db:5432/flyway_db
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+    networks:
+      - flyway-net
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+  # 6. Base de Datos Relacional PostgreSQL 16 optimizada para baja RAM (puerto interno 5432)
+  postgres-db:
+    image: postgres:16-alpine
+    container_name: flyway-postgres-db
+    restart: unless-stopped
+    command: postgres -c shared_buffers=32MB -c work_mem=4MB -c maintenance_work_mem=16MB -c max_connections=25
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: flyway
+      POSTGRES_PASSWORD: flyway_pass
+      POSTGRES_DB: flyway_db
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flyway -d flyway_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - flyway-net
+
+networks:
+  flyway-net:
+    name: flyway-net
+    driver: bridge
+
+volumes:
+  pgdata:
+    name: flyway-pgdata

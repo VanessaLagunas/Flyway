@@ -1,0 +1,211 @@
+name: Flyway CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  REGISTRY: ghcr.io
+  OWNER: ${{ github.repository_owner }}
+
+jobs:
+  # -------------------------------------------------------------
+  # Etapa 1: Linting y Chequeo de Tipos TypeScript (5 Servicios)
+  # -------------------------------------------------------------
+  lint:
+    name: 1. TypeScript & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: |
+            services/frontend/package-lock.json
+            services/bff/package-lock.json
+            services/auth-service/package-lock.json
+            services/ai-service/package-lock.json
+            services/catalog-service/package-lock.json
+
+      - name: Instalar dependencias y Lint Frontend
+        run: |
+          cd services/frontend
+          npm ci --legacy-peer-deps
+          npm run lint
+          npm run build
+
+      - name: Instalar dependencias y Lint BFF Gateway
+        run: |
+          cd services/bff
+          npm ci --legacy-peer-deps
+          npm run lint
+          npm run build
+
+      - name: Instalar dependencias y Lint Auth Service
+        run: |
+          cd services/auth-service
+          npm ci --legacy-peer-deps
+          npm run lint
+          npm run build
+
+      - name: Instalar dependencias y Lint AI Service
+        run: |
+          cd services/ai-service
+          npm ci --legacy-peer-deps
+          npm run lint
+          npm run build
+
+      - name: Instalar dependencias y Lint Catalog Service
+        run: |
+          cd services/catalog-service
+          npm ci --legacy-peer-deps
+          npm run lint
+          npm run build
+
+  # -------------------------------------------------------------
+  # Etapa 2: Levantamiento Docker Compose (6 contenedores) + Bruno CLI
+  # -------------------------------------------------------------
+  integration-test:
+    name: 2. Docker Compose & Bruno CLI Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Levantar los 6 contenedores con Docker Compose
+        run: |
+          docker compose up -d --build
+
+      - name: Esperar a que el BFF Gateway y servicios estén listos
+        run: |
+          echo "Esperando que los servicios alcancen estado saludable..."
+          for i in {1..30}; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/api/v1/health || true)
+            if [ "$STATUS" = "200" ]; then
+              echo "BFF Gateway y microservicios listos en http://localhost:4000 (HTTP 200)"
+              exit 0
+            fi
+            echo "Intento $i: esperando (HTTP $STATUS)..."
+            sleep 2
+          done
+          echo "Timeout esperando el levantamiento de los servicios"
+          docker compose logs
+          exit 1
+
+      - name: Instalar Bruno CLI
+        run: |
+          npm install -g @usebruno/cli
+
+      - name: Ejecutar colección de pruebas en Bruno (incluyendo Auth JWT)
+        run: |
+          cd bruno
+          bru run --env local
+
+      - name: Detener contenedores
+        if: always()
+        run: |
+          docker compose down -v
+
+  # -------------------------------------------------------------
+  # Etapa 3: Build & Push de las 5 Imágenes Docker hacia GHCR
+  # -------------------------------------------------------------
+  build-and-push:
+    name: 3. Build & Push 5 Images to GHCR
+    runs-on: ubuntu-latest
+    needs: integration-test
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Normalizar owner en minúsculas para GHCR
+        id: owner_lc
+        run: |
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Iniciar sesión en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/frontend
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-frontend:latest
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-frontend:${{ github.sha }}
+
+      - name: Build & Push BFF Gateway
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/bff
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-bff:latest
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-bff:${{ github.sha }}
+
+      - name: Build & Push Auth Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/auth-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-auth-service:latest
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-auth-service:${{ github.sha }}
+
+      - name: Build & Push AI Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/ai-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-ai-service:latest
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-ai-service:${{ github.sha }}
+
+      - name: Build & Push Catalog Service
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/catalog-service
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-catalog-service:latest
+            ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-catalog-service:${{ github.sha }}
+
+  # -------------------------------------------------------------
+  # Etapa 4: Despliegue Automatizado por SSH al VPS de 1GB RAM
+  # -------------------------------------------------------------
+  deploy:
+    name: 4. Continuous Deployment (SSH VPS 1GB RAM)
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    steps:
+      - name: Despliegue remoto sobre VPS Linux (pull + up con docker-compose.prod.yml)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            cd /opt/flyway || cd ~/flyway
+            export GHCR_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+            docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+            docker image prune -af

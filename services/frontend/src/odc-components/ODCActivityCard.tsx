@@ -1,0 +1,86 @@
+import React, { useState } from 'react';
+import { Activity } from '../types';
+import { getPexelsPhotoForActivity } from '../utils/photoUtils';
+
+export interface ODCActivityCardProps {
+  activity: Activity;
+  destination?: string;
+  onOpenDetails: (activity: Activity) => void;
+  onOpenMenu: (activity: Activity, event: React.MouseEvent) => void;
+}
+
+/**
+ * Reusable OutSystems ODC ActivityCard Block
+ * Renders individual activity timeline item with dot, photo, time, tags and options
+ */
+export const ODCActivityCard: React.FC<ODCActivityCardProps> = ({
+  activity,
+  destination = '',
+  onOpenDetails,
+  onOpenMenu,
+}) => {
+  const [imgError, setImgError] = useState(false);
+  const fallbackPhoto = getPexelsPhotoForActivity(activity, destination);
+  const displayImage = (!imgError && activity.imageUrl) ? activity.imageUrl : fallbackPhoto.url;
+
+  return (
+    <div className="fw-activity" id={`activity-${activity.id}`}>
+      <div className="fw-timeline__dot" />
+      <div className="fw-activity__card">
+        <div
+          className="fw-activity__open"
+          onClick={() => onOpenDetails(activity)}
+          role="button"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onOpenDetails(activity);
+            }
+          }}
+        >
+          <div className="fw-activity__img fw-img-fallback overflow-hidden relative group">
+            <img
+              src={displayImage}
+              alt={activity.title}
+              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+              onError={() => {
+                if (displayImage !== fallbackPhoto.url) {
+                  setImgError(true);
+                }
+              }}
+              referrerPolicy="no-referrer"
+            />
+          </div>
+          <div className="fw-activity__body">
+            <span className={`fw-time ${activity.isFood ? 'fw-time--food' : ''}`}>
+              {activity.timeRange}
+            </span>
+            <div className="fw-activity__title">{activity.title}</div>
+            <div className="fw-activity__desc">{activity.description}</div>
+          </div>
+        </div>
+
+        <div className="fw-activity__foot">
+          <span className="fw-cost">{activity.costText}</span>
+          <span className="fw-cat">
+            <span>{activity.categoryIcon}</span>
+            <span>{activity.category}</span>
+          </span>
+          <button
+            type="button"
+            className="fw-kebab"
+            aria-label="Opciones de actividad"
+            id={`kebab-${activity.id}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onOpenMenu(activity, e);
+            }}
+          >
+            &#8942;
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

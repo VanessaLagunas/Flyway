@@ -1,0 +1,19 @@
+meta {
+  name: 01 - Healthcheck BFF y Microservicios
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/health
+  body: none
+  auth: none
+}
+
+assert {
+  res.status: eq 200
+  res.body.status: eq ok
+  res.body.services.auth_service.status: eq ok
+  res.body.services.ai_service.status: eq ok
+  res.body.services.catalog_service.status: eq ok
+}
