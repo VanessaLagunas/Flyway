@@ -11,7 +11,11 @@ import { SavedTripsScreen } from './screens/SavedTripsScreen';
 import { LoginScreen, AuthUser } from './screens/LoginScreen';
 import { generateSmartTrip } from './utils/tripGenerator';
 import { ensureTripHasPexelsPhotos } from './utils/photoUtils';
-import { getWeatherAndClothingForTrip, getBudgetTierInfo } from './utils/weatherUtils';
+import {
+  getWeatherAndClothingForTrip,
+  fetchWeatherAndClothingForTrip,
+  getBudgetTierInfo,
+} from './utils/weatherUtils';
 
 export default function App() {
   const [activeScreen, setActiveScreen] = useState<ActiveScreen>('explore');
@@ -101,7 +105,7 @@ export default function App() {
     setActiveScreen('login');
   };
 
-  // Plan route workflow with real AI API call (OpenRouter free models / Gemini)
+  // Plan route workflow with real AI API call + live weather consultation
   const handlePlanRoute = async (formData: {
     destination: string;
     startDate: string;
@@ -111,22 +115,31 @@ export default function App() {
   }) => {
     setIsLoading(true);
     setLoadingTitle(`Buscando lo mejor de ${formData.destination}`);
-    setLoadingSubtitle('Consultando IA y calculando tiempos óptimos...');
+    setLoadingSubtitle('Consultando agente IA y pronóstico meteorológico del destino...');
 
     const subTimer1 = setTimeout(() => {
-      setLoadingSubtitle('Analizando opciones gastronómicas locales, traslados y paradas...');
+      setLoadingSubtitle('Analizando clima, qué vestimenta llevar, gastronomía y paradas...');
     }, 1200);
 
     const subTimer2 = setTimeout(() => {
       setLoadingSubtitle('Ajustando presupuesto en CLP y estructurando tu itinerario detallado...');
     }, 2800);
 
+    const liveWeatherPromise = fetchWeatherAndClothingForTrip(
+      formData.destination,
+      formData.startDate,
+      formData.endDate
+    );
+
     try {
-      const response = await fetch(`${bffUrl}/itinerary/generate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
+      const [response, liveWeather] = await Promise.all([
+        fetch(`${bffUrl}/itinerary/generate`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(formData),
+        }),
+        liveWeatherPromise,
+      ]);
 
       clearTimeout(subTimer1);
       clearTimeout(subTimer2);
@@ -138,24 +151,38 @@ export default function App() {
       const result = await response.json();
       const rawTripObj = result.trip || (result.currency ? result : null);
       if (rawTripObj) {
-        const weatherInfo = getWeatherAndClothingForTrip(
-          rawTripObj.destination || formData.destination,
-          rawTripObj.startDate || formData.startDate,
-          rawTripObj.endDate || formData.endDate
-        );
+        const weatherInfo =
+          liveWeather ||
+          getWeatherAndClothingForTrip(
+            rawTripObj.destination || formData.destination,
+            rawTripObj.startDate || formData.startDate,
+            rawTripObj.endDate || formData.endDate
+          );
         const budgetInfo = getBudgetTierInfo(rawTripObj.budgetLevel || formData.budget);
+        const useLivePriority = weatherInfo.weatherSource === 'open-meteo';
+
         const enrichedTrip = ensureTripHasPexelsPhotos({
           ...rawTripObj,
-          season: rawTripObj.season || weatherInfo.season,
-          currentSeason: rawTripObj.currentSeason || weatherInfo.currentSeason,
-          weatherCondition: rawTripObj.weatherCondition || weatherInfo.weatherCondition,
-          temperatureRange: rawTripObj.temperatureRange || weatherInfo.temperatureRange,
-          weatherSummary: rawTripObj.weatherSummary || weatherInfo.weatherSummary,
-          clothingTip: rawTripObj.clothingTip || weatherInfo.clothingTip,
+          season: useLivePriority ? weatherInfo.season : rawTripObj.season || weatherInfo.season,
+          currentSeason: useLivePriority
+            ? weatherInfo.currentSeason
+            : rawTripObj.currentSeason || weatherInfo.currentSeason,
+          weatherCondition: useLivePriority
+            ? weatherInfo.weatherCondition
+            : rawTripObj.weatherCondition || weatherInfo.weatherCondition,
+          temperatureRange: useLivePriority
+            ? weatherInfo.temperatureRange
+            : rawTripObj.temperatureRange || weatherInfo.temperatureRange,
+          weatherSummary: useLivePriority
+            ? weatherInfo.weatherSummary
+            : rawTripObj.weatherSummary || weatherInfo.weatherSummary,
+          clothingTip: useLivePriority
+            ? weatherInfo.clothingTip
+            : rawTripObj.clothingTip || weatherInfo.clothingTip,
           clothingItems:
-            rawTripObj.clothingItems && rawTripObj.clothingItems.length > 0
-              ? rawTripObj.clothingItems
-              : weatherInfo.clothingItems,
+            useLivePriority || !rawTripObj.clothingItems || rawTripObj.clothingItems.length === 0
+              ? weatherInfo.clothingItems
+              : rawTripObj.clothingItems,
           budgetRangeText: rawTripObj.budgetRangeText || budgetInfo.dailyRangeText,
           budgetDescription: rawTripObj.budgetDescription || budgetInfo.description,
         });
@@ -168,6 +195,8 @@ export default function App() {
       console.warn('[Flyway] Fallo al consultar API con IA, usando generador inteligente de respaldo:', err);
       clearTimeout(subTimer1);
       clearTimeout(subTimer2);
+
+      const liveWeather = await liveWeatherPromise;
 
       const isChile =
         formData.destination.toLowerCase().includes('chile') ||
@@ -184,6 +213,13 @@ export default function App() {
         interests: formData.interests,
       });
 
+      fallbackTrip.season = liveWeather.season;
+      fallbackTrip.currentSeason = liveWeather.currentSeason;
+      fallbackTrip.weatherCondition = liveWeather.weatherCondition;
+      fallbackTrip.temperatureRange = liveWeather.temperatureRange;
+      fallbackTrip.weatherSummary = liveWeather.weatherSummary;
+      fallbackTrip.clothingTip = liveWeather.clothingTip;
+      fallbackTrip.clothingItems = liveWeather.clothingItems;
       fallbackTrip.isChileanDestination = isChile;
       fallbackTrip.aiSource = 'synthesis';
       fallbackTrip.generatedByModel = 'Flyway Smart Engine (Modo Local)';

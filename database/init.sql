@@ -2,19 +2,26 @@
 -- Flyway Database Initialization Schema & Seed Data
 -- ====================================================================
 
--- 1. Tabla de Usuarios (Autenticación Local con Bcrypt)
+-- 1. Tabla de Usuarios (Autenticación Local con Bcrypt + Google OAuth)
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    password_hash VARCHAR(255),
     name VARCHAR(100) NOT NULL,
+    auth_provider VARCHAR(50) DEFAULT 'local',
+    avatar_url TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 2. Tabla de Destinos Turísticos
+-- Migraciones seguras si la tabla ya existía
+ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'local';
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
+-- 2. Tabla de Destinos Turísticos (Catálogo Vivo)
 CREATE TABLE IF NOT EXISTS destinations (
     id SERIAL PRIMARY KEY,
-    name VARCHAR(150) NOT NULL,
+    name VARCHAR(150) NOT NULL UNIQUE,
     region VARCHAR(150),
     commune VARCHAR(150),
     country VARCHAR(100),
@@ -33,15 +40,19 @@ CREATE TABLE IF NOT EXISTS saved_itineraries (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 4. Tabla de Caché de Fotos de Pexels
+-- 4. Tabla de Caché de Fotos de Pexels (Patrón Cache-Aside)
 CREATE TABLE IF NOT EXISTS photo_cache (
     query_key VARCHAR(255) PRIMARY KEY,
+    destination_name VARCHAR(150),
     photo_url TEXT NOT NULL,
     photographer VARCHAR(150),
+    photographer_url TEXT,
+    photos_json JSONB DEFAULT '[]'::jsonb,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Índices de Rendimiento
+CREATE INDEX IF NOT EXISTS idx_destinations_name_lower ON destinations(LOWER(name));
 CREATE INDEX IF NOT EXISTS idx_destinations_country ON destinations(country);
 CREATE INDEX IF NOT EXISTS idx_destinations_tags ON destinations USING GIN(tags);
 CREATE INDEX IF NOT EXISTS idx_saved_itineraries_user_id ON saved_itineraries(user_id);
@@ -121,4 +132,11 @@ VALUES
 
     ('Madrid', 'Comunidad de Madrid', 'Chamberí', 'España', 72000, 
      '["cultura", "tapas", "museos", "parques", "historia"]'::jsonb, 
-     'Capital española reconocida por el Triángulo del Arte (Museo del Prado, Reina Sofía), su vibrante cultura de tapeo y el Parque de El Retiro.');
+     'Capital española reconocida por el Triángulo del Arte (Museo del Prado, Reina Sofía), su vibrante cultura de tapeo y el Parque de El Retiro.')
+ON CONFLICT (name) DO UPDATE
+SET region = EXCLUDED.region,
+    commune = EXCLUDED.commune,
+    country = EXCLUDED.country,
+    avg_daily_cost_clp = EXCLUDED.avg_daily_cost_clp,
+    tags = EXCLUDED.tags,
+    description = EXCLUDED.description;

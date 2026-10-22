@@ -44,9 +44,13 @@ export const ODCActivityCard: React.FC<ODCActivityCardProps> = ({
               src={displayImage}
               alt={activity.title}
               className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-              onError={() => {
-                if (displayImage !== fallbackPhoto.url) {
+              onError={(e) => {
+                if (!imgError && activity.imageUrl && activity.imageUrl !== fallbackPhoto.url) {
                   setImgError(true);
+                } else if (e.currentTarget.src !== fallbackPhoto.url) {
+                  e.currentTarget.src = fallbackPhoto.url;
+                } else {
+                  e.currentTarget.src = 'https://images.pexels.com/photos/17808457/pexels-photo-17808457.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940';
                 }
               }}
               referrerPolicy="no-referrer"

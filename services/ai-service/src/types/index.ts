@@ -35,15 +35,19 @@ export interface TransferInfo {
   icon: string;
 }
 
+export type SourceEngine = 'gemini' | 'openai' | 'openrouter' | 'offline_local';
+
 export interface TripDay {
   dayNumber: number;
   dateFormatted: string;
   dailyCost: number;
+  dailyCostCLP?: number;
   imageUrl?: string;
   imagePhotographer?: string;
   imagePhotographerUrl?: string;
   title?: string;
   summary?: string;
+  activities?: Activity[];
   items: Array<
     | { type: 'activity'; data: Activity }
     | { type: 'transfer'; data: TransferInfo }
@@ -59,22 +63,31 @@ export interface Trip {
   id: string;
   title: string;
   destination: string;
+  country: string;
+  region: string;
+  commune: string;
+  avgDailyCostCLP: number;
+  tags: string[];
+  description: string;
+  currency: 'CLP' | string;
+  totalEstimatedCostCLP: number;
+  sourceEngine: SourceEngine;
   datesText: string;
   startDate: string;
   endDate: string;
   budgetLevel: BudgetLevel;
   budgetLabel: string;
   totalCost: number;
-  currency: string;
   summary: string;
   season: string;
   imageUrl?: string;
+  photoUrl?: string;
   isFavorite: boolean;
   days: TripDay[];
   savingTips: string[];
   whyThisRoute: string;
   generatedByModel?: string;
-  aiSource?: 'openrouter' | 'gemini' | 'synthesis';
+  aiSource?: 'openai' | 'openrouter' | 'gemini' | 'synthesis' | 'offline_local';
   destinationCountry?: string;
   isChileanDestination?: boolean;
   imagePhotographer?: string;

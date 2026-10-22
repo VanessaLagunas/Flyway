@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyway-config
+data:
+  NODE_ENV: "production"
+  PORT_BFF: "4000"
+  PORT_AUTH: "4003"
+  PORT_AI: "4001"
+  PORT_CATALOG: "4002"
+  # Enlaces internos DNS de Kubernetes (ClusterIP Services)
+  AUTH_SERVICE_URL: "http://auth-service:4003"
+  AI_SERVICE_URL: "http://ai-service:4001"
+  CATALOG_SERVICE_URL: "http://catalog-service:4002"
+  DATABASE_URL: "postgres://flyway:flyway_pass@postgres-db:5432/flyway_db"
+  POSTGRES_DB: "flyway_db"
+  POSTGRES_USER: "flyway"
+  OPENAI_MODEL: "gpt-4o-mini"
+  OPENROUTER_MODEL: "openrouter/free"
+  GOOGLE_CLIENT_ID: ""

@@ -262,10 +262,10 @@ export const PEXELS_DESTINATION_PHOTOS: Record<string, PexelsPhotoMeta[]> = {
       photographerUrl: 'https://www.pexels.com/@apasaric',
     },
     {
-      url: 'https://images.pexels.com/photos/161401/fushimi-inari-taisha-shrine-kyoto-japan-161401.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
-      alt: 'Templo tradicional japonés y santuarios históricos en Tokio',
-      photographer: 'Pixabay',
-      photographerUrl: 'https://www.pexels.com',
+      url: 'https://images.pexels.com/photos/1440476/pexels-photo-1440476.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Templo tradicional japonés Senso-ji y santuarios históricos en Tokio',
+      photographer: 'Aleksandar Pasaric',
+      photographerUrl: 'https://www.pexels.com/@apasaric',
     },
     {
       url: 'https://images.pexels.com/photos/3408354/pexels-photo-3408354.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
@@ -342,6 +342,188 @@ export const PEXELS_DESTINATION_PHOTOS: Record<string, PexelsPhotoMeta[]> = {
       alt: 'Cafés notables, librerías y avenidas arboladas de Recoleta y San Telmo',
       photographer: 'Haley Black',
       photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  noruega: [
+    {
+      url: 'https://images.pexels.com/photos/33695268/pexels-photo-33695268.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Fiordos e Islas Lofoten en Noruega',
+      photographer: 'Alexander Shch',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/32538772/pexels-photo-32538772.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Montañas y fiordos escarpados en Noruega',
+      photographer: 'stein egil liland',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/20015194/pexels-photo-20015194.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Ferry y costa navegable en Harstad, Noruega',
+      photographer: 'Rune Bjørnsen',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/39872670/pexels-photo-39872670.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Vista aérea de la costa salvaje y montañas de Nordland, Noruega',
+      photographer: 'stein egil liland',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/39418357/pexels-photo-39418357.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Cabañas tradicionales de pescadores y fiordos en Noruega',
+      photographer: 'Franco Sulli',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  rusia: [
+    {
+      url: 'https://images.pexels.com/photos/8612083/pexels-photo-8612083.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Catedral de San Basilio y Plaza Roja en Moscú, Rusia',
+      photographer: 'Elena Golovchenko',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/290275/pexels-photo-290275.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Canales y puentes históricos de San Petersburgo, Rusia',
+      photographer: 'Vitali Adutskevich',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/1470405/pexels-photo-1470405.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Palacios y arquitectura imperial en Rusia',
+      photographer: 'Pexels Contributor',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  polo_sur: [
+    {
+      url: 'https://images.pexels.com/photos/1670977/pexels-photo-1670977.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Manto de hielo y cumbres glaciares en el Polo Sur y la Antártica',
+      photographer: 'Francesco Ungaro',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/30359266/pexels-photo-30359266.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Glaciares australes y montañas de hielo polar',
+      photographer: 'Marek Piwnicki',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/1525041/pexels-photo-1525041.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Reflejos en aguas heladas y paisajes de expedición polar',
+      photographer: 'Frans van Heerden',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  paris: [
+    {
+      url: 'https://images.pexels.com/photos/2363/france-landmark-lights-night.jpg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Pirámide del Museo del Louvre iluminada en París, Francia',
+      photographer: 'Pexels Contributor',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/161853/eiffel-tower-paris-france-tower-161853.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Torre Eiffel y horizonte parisino en París, Francia',
+      photographer: 'Pixabay',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/532826/pexels-photo-532826.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Río Sena, puentes de piedra y arquitectura clásica de París',
+      photographer: 'Thorsten technoman',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  madrid: [
+    {
+      url: 'https://images.pexels.com/photos/3787839/pexels-photo-3787839.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Gran Vía y edificio Metrópolis en Madrid, España',
+      photographer: 'Felipe Gabaldón',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/3254729/pexels-photo-3254729.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Plaza Mayor y arquitectura señorial de Madrid',
+      photographer: 'Pexels Contributor',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  londres: [
+    {
+      url: 'https://images.pexels.com/photos/460672/pexels-photo-460672.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Big Ben y Palacio de Westminster en Londres, Reino Unido',
+      photographer: 'Pixabay',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/726484/pexels-photo-726484.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Tower Bridge y río Támesis en Londres',
+      photographer: 'Pixabay',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  nueva_york: [
+    {
+      url: 'https://images.pexels.com/photos/139300/pexels-photo-139300.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Skyline de Manhattan y rascacielos de Nueva York, Estados Unidos',
+      photographer: 'Vlad Alexandru Popa',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/802024/pexels-photo-802024.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Puente de Brooklyn y atardecer sobre Nueva York',
+      photographer: 'Pexels Contributor',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  cancun: [
+    {
+      url: 'https://images.pexels.com/photos/13732857/pexels-photo-13732857.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Playas de arena blanca y mar turquesa en Cancún y la Riviera Maya',
+      photographer: 'Asad Photo Maldives',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  valdivia: [
+    {
+      url: 'https://images.pexels.com/photos/1619317/pexels-photo-1619317.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Río Calle-Calle y selva valdiviana en el sur de Chile',
+      photographer: 'James Wheeler',
+      photographerUrl: 'https://www.pexels.com',
+    },
+    {
+      url: 'https://images.pexels.com/photos/20903493/pexels-photo-20903493.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Costanera fluvial y puentes de Valdivia',
+      photographer: 'Exequiel Fuentes',
+      photographerUrl: 'https://www.pexels.com',
+    },
+  ],
+  neutral_travel: [
+    {
+      url: 'https://images.pexels.com/photos/1525041/pexels-photo-1525041.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Paisaje montañoso y cumbres naturales para viaje',
+      photographer: 'Frans van Heerden',
+      photographerUrl: 'https://www.pexels.com/@frans-van-heerden-201846',
+    },
+    {
+      url: 'https://images.pexels.com/photos/1619317/pexels-photo-1619317.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Lagos serenos y cordones montañosos de exploración',
+      photographer: 'James Wheeler',
+      photographerUrl: 'https://www.pexels.com/@souvenirpixels',
+    },
+    {
+      url: 'https://images.pexels.com/photos/38993747/pexels-photo-38993747.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Costa marina y atardecer oceánico',
+      photographer: "César O'neill",
+      photographerUrl: 'https://www.pexels.com/@cesar-oneill',
+    },
+    {
+      url: 'https://images.pexels.com/photos/302899/pexels-photo-302899.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+      alt: 'Cafetería de descanso y tertulia de viaje',
+      photographer: 'Chevanon Photography',
+      photographerUrl: 'https://www.pexels.com/@chevanon',
     },
   ],
 };
@@ -651,14 +833,23 @@ export function getDestinationKey(destination = ''): string {
   if (lower.includes('atacama') || lower.includes('san pedro') || lower.includes('calama') || lower.includes('elqui') || lower.includes('serena') || lower.includes('iquique')) return 'atacama';
   if (lower.includes('paine') || lower.includes('patagonia') || lower.includes('natales') || lower.includes('arenas') || lower.includes('aysen') || lower.includes('coyhaique')) return 'torres';
   if (lower.includes('chiloe') || lower.includes('castro') || lower.includes('ancud') || lower.includes('dalcahue')) return 'chiloe';
-  if (lower.includes('pucon') || lower.includes('villarrica') || lower.includes('caburgua') || lower.includes('varas') || lower.includes('valdivia') || lower.includes('frutillar') || lower.includes('osorno')) return 'pucon';
+  if (lower.includes('pucon') || lower.includes('villarrica') || lower.includes('caburgua') || lower.includes('varas') || lower.includes('frutillar') || lower.includes('osorno')) return 'pucon';
+  if (lower.includes('valdivia') || lower.includes('corral') || lower.includes('niebla')) return 'valdivia';
   if (lower.includes('santiago') || lower.includes('bellavista') || lower.includes('cristobal') || lower.includes('providencia') || lower.includes('las condes') || lower.includes('maipo')) return 'santiago';
   if (lower.includes('cusco') || lower.includes('peru') || lower.includes('machu') || lower.includes('lima')) return 'cusco';
   if (lower.includes('tokio') || lower.includes('tokyo') || lower.includes('japon') || lower.includes('japan') || lower.includes('kioto') || lower.includes('kyoto')) return 'tokio';
-  if (lower.includes('roma') || lower.includes('italia') || lower.includes('italy') || lower.includes('florencia') || lower.includes('venecia') || lower.includes('madrid') || lower.includes('paris')) return 'roma';
-  if (lower.includes('buenos aires') || lower.includes('argentina') || lower.includes('palermo') || lower.includes('mendoza')) return 'buenos_aires';
+  if (lower.includes('paris') || lower.includes('francia') || lower.includes('france')) return 'paris';
+  if (lower.includes('madrid')) return 'madrid';
+  if (lower.includes('londres') || lower.includes('inglaterra') || lower.includes('london')) return 'londres';
+  if (lower.includes('roma') || lower.includes('italia') || lower.includes('italy') || lower.includes('florencia') || lower.includes('venecia')) return 'roma';
+  if (lower.includes('nueva york') || lower.includes('new york') || lower.includes('manhattan')) return 'nueva_york';
+  if (lower.includes('cancun') || lower.includes('caribe')) return 'cancun';
+  if (lower.includes('noruega') || lower.includes('oslo') || lower.includes('bergen') || lower.includes('tromso') || lower.includes('norway')) return 'noruega';
+  if (lower.includes('rusia') || lower.includes('moscu') || lower.includes('san petersburgo') || lower.includes('russia')) return 'rusia';
+  if (lower.includes('polo sur') || lower.includes('antartica') || lower.includes('antartida') || lower.includes('south pole')) return 'polo_sur';
+  if (lower.includes('buenos aires') || lower.includes('argentina') || lower.includes('palermo')) return 'buenos_aires';
   if (lower.includes('valparaiso') || lower.includes('valpo') || lower.includes('vina') || lower.includes('concon')) return 'valparaiso';
-  return 'valparaiso';
+  return 'neutral_travel';
 }
 
 /**
@@ -670,7 +861,7 @@ export function getPexelsPhotoForDestination(
   usedUrls?: Set<string>
 ): PexelsPhotoMeta {
   const key = getDestinationKey(destination);
-  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.valparaiso;
+  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.neutral_travel || PEXELS_DESTINATION_PHOTOS.valparaiso;
 
   if (usedUrls) {
     const available = list.find((p) => !usedUrls.has(p.url));
@@ -705,7 +896,7 @@ export function getPexelsPhotoForDay(
   }
 
   const key = getDestinationKey(destination);
-  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.valparaiso;
+  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.neutral_travel || PEXELS_DESTINATION_PHOTOS.valparaiso;
 
   if (usedUrls) {
     const available = list.find((p) => !usedUrls.has(p.url));
@@ -841,7 +1032,7 @@ export function ensureTripHasPexelsPhotos(trip: Trip): Trip {
     imagePhotographerUrl: trip.imagePhotographerUrl || heroPhoto.photographerUrl,
     days: (trip.days || []).map((day, dIdx) => {
       // 2. Day Hero photo (unique for each day, matching destination)
-      const dayPhoto = getPexelsPhotoForDay({ ...day, imageUrl: undefined }, dest, dIdx, usedUrls);
+      const dayPhoto = getPexelsPhotoForDay(day, dest, dIdx, usedUrls);
 
       return {
         ...day,

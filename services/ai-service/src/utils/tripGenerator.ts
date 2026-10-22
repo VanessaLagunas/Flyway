@@ -441,15 +441,33 @@ export function generateSmartTrip(params: {
     }
   }
 
+  // Enrich each day with dailyCostCLP and activities list for unified contract compatibility
+  for (const day of days) {
+    day.dailyCostCLP = day.dailyCost;
+    day.activities = day.items
+      .filter((it): it is { type: 'activity'; data: any } => it.type === 'activity')
+      .map((it) => it.data);
+  }
+
   const startFmt = formatDateSpanish(startDate);
   const endFmt = formatDateSpanish(endDate);
   const weatherInfo = getWeatherAndClothingForTrip(destination, startDate, endDate);
   const budgetTier = getBudgetTierInfo(budget);
+  const meta = inferDestinationMetadata(destination, matchedCatalog, isChile, totalTripCost, daysCount, params.interests);
 
   const generatedTrip: Trip = {
     id: `trip-${Date.now()}`,
-    title: matchedCatalog ? `Ruta Completa por ${matchedCatalog.name}` : `Ruta Personalizada por ${destination}`,
-    destination,
+    title: matchedCatalog ? `Ruta Completa por ${matchedCatalog.name}` : `Ruta Personalizada por ${meta.destination}`,
+    destination: meta.destination,
+    country: meta.country,
+    region: meta.region,
+    commune: meta.commune,
+    avgDailyCostCLP: meta.avgDailyCostCLP,
+    tags: meta.tags,
+    description: meta.description,
+    currency: 'CLP',
+    totalEstimatedCostCLP: totalTripCost,
+    sourceEngine: 'offline_local',
     datesText: `${startFmt} - ${endFmt}`,
     startDate,
     endDate,
@@ -458,10 +476,9 @@ export function generateSmartTrip(params: {
     budgetRangeText: budgetTier.dailyRangeText,
     budgetDescription: budgetTier.description,
     totalCost: totalTripCost,
-    currency: 'CLP',
     summary: matchedCatalog 
       ? `Itinerario de ${daysCount} días recorriendo sus diversas comunas (${matchedCatalog.comunasOrSectors.map(c => c.name).slice(0, 3).join(', ')}), con actividades y presupuestos diarios adaptados.`
-      : `Ruta de ${daysCount} días descubriendo diferentes sectores y barrios de ${destination}, con presupuestos y atractivos variados cada día.`,
+      : `Ruta de ${daysCount} días descubriendo diferentes sectores y barrios de ${meta.destination}, con presupuestos y atractivos variados cada día.`,
     season: weatherInfo.season,
     currentSeason: weatherInfo.currentSeason,
     weatherCondition: weatherInfo.weatherCondition,
@@ -470,8 +487,9 @@ export function generateSmartTrip(params: {
     clothingTip: weatherInfo.clothingTip,
     clothingItems: weatherInfo.clothingItems,
     imageUrl: heroPhoto.url,
+    photoUrl: heroPhoto.url,
     imagePhotographer: heroPhoto.photographer,
-    destinationCountry: isChile ? 'Chile 🇨🇱' : 'Internacional 🌎',
+    destinationCountry: isChile ? 'Chile 🇨🇱' : `${meta.country} 🌎`,
     isChileanDestination: isChile,
     isFavorite: false,
     whyThisRoute: `Cada día explora un sector y comuna diferente, distribuyendo los costos de manera variada y sin repetir destinos.`,
@@ -485,3 +503,215 @@ export function generateSmartTrip(params: {
 
   return ensureTripHasPexelsPhotos(generatedTrip);
 }
+
+interface DestinationMetaLookup {
+  name: string;
+  country: string;
+  region: string;
+  commune: string;
+  tags: string[];
+  description: string;
+}
+
+const KNOWN_DESTINATION_METADATA: Record<string, DestinationMetaLookup> = {
+  pucon: {
+    name: 'Pucón',
+    country: 'Chile',
+    region: 'Región de La Araucanía',
+    commune: 'Pucón',
+    tags: ['termas', 'volcan', 'aventura', 'naturaleza', 'trekking'],
+    description: 'Capital del turismo aventura lacustre en el sur de Chile, a orillas del Lago Villarrica y bajo el imponente volcán activo Villarrica.',
+  },
+  valparaiso: {
+    name: 'Valparaíso',
+    country: 'Chile',
+    region: 'Región de Valparaíso',
+    commune: 'Cerro Alegre',
+    tags: ['cultura', 'arte', 'bohemia', 'gastronomia', 'patrimonio'],
+    description: 'Ciudad puerto Patrimonio de la Humanidad con icónicos cerros de arquitectura victoriana, ascensores patrimoniales, miradores hacia el Pacífico y arte urbano.',
+  },
+  santiago: {
+    name: 'Santiago',
+    country: 'Chile',
+    region: 'Región Metropolitana',
+    commune: 'Santiago Centro',
+    tags: ['cultura', 'gastronomia', 'naturaleza', 'museos', 'parques'],
+    description: 'Vibrante metrópolis flanqueada por la Cordillera de los Andes, con diversidad de comunas patrimoniales, gastronómicas y parques de montaña.',
+  },
+  'san pedro de atacama': {
+    name: 'San Pedro de Atacama',
+    country: 'Chile',
+    region: 'Región de Antofagasta',
+    commune: 'San Pedro de Atacama',
+    tags: ['naturaleza', 'aventura', 'arqueologia', 'fotografia', 'astronomia'],
+    description: 'Oasis místico en el desierto más árido del mundo, rodeado de salares con flamencos, lagunas altiplánicas y géiseres humeantes.',
+  },
+  'torres del paine': {
+    name: 'Torres del Paine',
+    country: 'Chile',
+    region: 'Región de Magallanes',
+    commune: 'Torres del Paine',
+    tags: ['aventura', 'patagonia', 'naturaleza', 'trekking', 'fauna'],
+    description: 'Parque Nacional de renombre mundial en la Patagonia austral, con imponentes cuernos de granito, lagos de color turquesa y glaciares milenarios.',
+  },
+  chiloe: {
+    name: 'Chiloé',
+    country: 'Chile',
+    region: 'Región de Los Lagos',
+    commune: 'Castro',
+    tags: ['cultura', 'mitologia', 'gastronomia', 'iglesias', 'naturaleza'],
+    description: 'Archipiélago místico del sur chileno famoso por sus palafitos sobre el mar, iglesias de madera Patrimonio de la Humanidad y el tradicional curanto.',
+  },
+  'puerto varas': {
+    name: 'Puerto Varas',
+    country: 'Chile',
+    region: 'Región de Los Lagos',
+    commune: 'Puerto Varas',
+    tags: ['naturaleza', 'lagos', 'volcanes', 'gastronomia', 'patrimonio'],
+    description: 'La Ciudad de las Rosas a orillas del Lago Llanquihue, con vistas panorámicas a los volcanes Osorno y Calbuco y herencia arquitectónica alemana.',
+  },
+  frutillar: {
+    name: 'Frutillar',
+    country: 'Chile',
+    region: 'Región de Los Lagos',
+    commune: 'Frutillar',
+    tags: ['cultura', 'musica', 'gastronomia', 'lagos', 'patrimonio'],
+    description: 'Balneario lacustre célebre por el Teatro del Lago, su costanera frente al volcán Osorno y la repostería tradicional de colonos alemanes.',
+  },
+  valdivia: {
+    name: 'Valdivia',
+    country: 'Chile',
+    region: 'Región de Los Ríos',
+    commune: 'Valdivia',
+    tags: ['rios', 'naturaleza', 'cerveza', 'historia', 'gastronomia'],
+    description: 'Ciudad fluvial rodeada de selva valdiviana, mercados ribereños, fuertes coloniales de Niebla y Corral y reconocida tradición cervecera artesanal.',
+  },
+  'la serena': {
+    name: 'La Serena',
+    country: 'Chile',
+    region: 'Región de Coquimbo',
+    commune: 'La Serena',
+    tags: ['playa', 'astronomia', 'arquitectura', 'naturaleza', 'valles'],
+    description: 'Segunda ciudad más antigua de Chile, puerta de entrada al Valle del Elqui, con extensas playas, iglesias de piedra caliza y cielos estrellados.',
+  },
+  iquique: {
+    name: 'Iquique',
+    country: 'Chile',
+    region: 'Región de Tarapacá',
+    commune: 'Iquique',
+    tags: ['playa', 'deportes', 'historia', 'desierto', 'gastronomia'],
+    description: 'Destino costero del norte grande entre el océano Pacífico y las dunas del Cerro Dragón, con arquitectura georgiana en Paseo Baquedano.',
+  },
+  pichilemu: {
+    name: 'Pichilemu',
+    country: 'Chile',
+    region: "Región de O'Higgins",
+    commune: 'Pichilemu',
+    tags: ['surf', 'playa', 'naturaleza', 'gastronomia', 'aventura'],
+    description: 'Capital mundial del surf en Punta de Lobos, con acantilados costeros, salinas artesanales de Cahuil y gastronomía marina.',
+  },
+  noruega: {
+    name: 'Noruega',
+    country: 'Noruega',
+    region: 'Escandinavia / Fiordos Noruegos',
+    commune: 'Oslo y Fiordos',
+    tags: ['fiordos', 'naturaleza', 'auroras', 'cultura', 'aventura'],
+    description: 'Tierra de fiordos majestuosos, montañas nevadas, herencia vikinga y auroras boreales en el norte de Europa.',
+  },
+  rusia: {
+    name: 'Rusia',
+    country: 'Rusia',
+    region: 'Rusia Europea / Moscú y San Petersburgo',
+    commune: 'Moscú Centro',
+    tags: ['historia', 'arquitectura', 'cultura', 'museos', 'invierno'],
+    description: 'Vasto territorio euroasiático célebre por la arquitectura imperial de Moscú y San Petersburgo, catedrales históricas y paisajes invernales.',
+  },
+  'polo sur': {
+    name: 'Polo Sur',
+    country: 'Antártida',
+    region: 'Meseta Polar Antártica',
+    commune: 'Estación Amundsen-Scott / Glaciares',
+    tags: ['expedicion', 'polar', 'hielo', 'aventura', 'ciencia'],
+    description: 'El punto más austral del planeta en el corazón de la Antártida, un desierto de hielo perpetuo y condiciones polares extremas.',
+  },
+  antartica: {
+    name: 'Antártica',
+    country: 'Antártida',
+    region: 'Península Antártica e Islas Shetland del Sur',
+    commune: 'Isla Rey Jorge',
+    tags: ['glaciares', 'fauna', 'expedicion', 'polar', 'naturaleza'],
+    description: 'Continente blanco de glaciares colosales, témpanos azules, colonias de pingüinos y bases científicas internacionales.',
+  },
+  islandia: {
+    name: 'Islandia',
+    country: 'Islandia',
+    region: 'Atlántico Norte / Círculo Dorado',
+    commune: 'Reikiavik',
+    tags: ['volcanes', 'cascadas', 'termas', 'glaciares', 'auroras'],
+    description: 'Isla nórdica de fuego y hielo con géiseres activos, cascadas monumentales, campos de lava y lagunas geotermales.',
+  },
+};
+
+export function inferDestinationMetadata(
+  rawDestination: string,
+  matchedCatalog: DestinationInfo | undefined,
+  isChile: boolean,
+  totalTripCost: number,
+  daysCount: number,
+  interests?: string[]
+): {
+  destination: string;
+  country: string;
+  region: string;
+  commune: string;
+  avgDailyCostCLP: number;
+  tags: string[];
+  description: string;
+} {
+  const cleanName = rawDestination
+    .split(',')[0]
+    .replace(/\([^)]*\)/g, '')
+    .trim() || rawDestination.trim();
+
+  const normKey = cleanName
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+
+  const known = KNOWN_DESTINATION_METADATA[normKey] ||
+    Object.entries(KNOWN_DESTINATION_METADATA).find(([k]) => normKey.includes(k) || k.includes(normKey))?.[1];
+
+  const destination = known?.name || matchedCatalog?.name || cleanName;
+  const country = known?.country || matchedCatalog?.country || (isChile ? 'Chile' : 'Internacional');
+  const region = known?.region || matchedCatalog?.region || (isChile ? 'Región de Chile' : country);
+  const commune =
+    known?.commune ||
+    (matchedCatalog?.comunasOrSectors && matchedCatalog.comunasOrSectors[0]?.name) ||
+    destination;
+
+  const avgDailyCostCLP = Math.max(Math.round(totalTripCost / Math.max(daysCount, 1)), 15000);
+
+  const interestTags = Array.isArray(interests) && interests.length > 0
+    ? interests.map((i) => String(i).toLowerCase().trim()).filter(Boolean)
+    : [];
+
+  const baseTags = known?.tags || matchedCatalog?.popularInterests || ['cultura', 'gastronomia', 'naturaleza'];
+  const mergedTags = Array.from(new Set([...baseTags, ...interestTags]));
+
+  const description =
+    known?.description ||
+    matchedCatalog?.description ||
+    `Destino turístico destacado en ${region} (${country}), reconocido por su oferta cultural, gastronómica y atractivos patrimoniales en el sector de ${commune}.`;
+
+  return {
+    destination,
+    country,
+    region,
+    commune,
+    avgDailyCostCLP,
+    tags: mergedTags,
+    description,
+  };
+}
+

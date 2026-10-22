@@ -6,34 +6,4 @@ coverage/
 *.log
 .env*
 !.env.example
-# Dependencias
-node_modules/
-/node_modules/
-
-# Compilados y builds
-dist/
-/dist/
-build/
-**/build/
-
-# Variables de entorno y secretos
-.env
-.env.*
-!.env.example
-!.env.*.example
-
-# Base de datos local (volúmenes de PostgreSQL)
-pgdata/
-postgres_data/
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-
-# Cobertura de pruebas
-coverage/
-
-# Archivos del sistema y temporales
-.DS_Store
-Thumbs.db
+gcp-key.json

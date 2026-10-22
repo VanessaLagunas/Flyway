@@ -46,6 +46,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://flyway:flyway_pass@postgres-db:5432/flyway_db
       JWT_SECRET: ${JWT_SECRET:-flyway-super-secret-jwt-key-2026}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     networks:
       - flyway-net
     depends_on:
@@ -63,8 +64,11 @@ services:
     environment:
       PORT: 4001
       NODE_ENV: production
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     networks:
       - flyway-net
 

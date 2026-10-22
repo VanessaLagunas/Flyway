@@ -5,15 +5,199 @@ export interface PexelsPhotoResult {
   alt: string;
 }
 
-// User-provided Pexels API Key
-const DEFAULT_PEXELS_KEY = 'KCXmGYJTl8aJobrlbgoU77V3SNLvbjkxO9P8OPk5sazUKARfJcqBGSu9';
-
 function getPexelsKey(): string {
-  return process.env.PEXELS_API_KEY || DEFAULT_PEXELS_KEY;
+  return (process.env.PEXELS_API_KEY || '').trim();
 }
 
-// In-memory cache to prevent redundant API calls
-const cache = new Map<string, PexelsPhotoResult[]>();
+/**
+ * Genera variantes semánticas precisas en inglés para el motor de búsqueda fotográfica de Pexels.
+ * Corrige errores comunes de traducción (ej: "Polo Sur" que Pexels interpreta como deporte de polo)
+ * y enriquece nombres de ciudades y países con términos turísticos y arquitectónicos.
+ */
+export function buildPexelsSearchVariants(rawQuery: string): string[] {
+  const clean = rawQuery.replace(/\([^)]*\)/g, ' ').trim();
+  const lower = clean
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+
+  const variants: string[] = [];
+
+  // 1. Zonas Polares y Extremos
+  if (lower.includes('polo sur') || lower.includes('antartica') || lower.includes('antartida') || lower.includes('south pole')) {
+    variants.push('South Pole Antarctica ice landscape', 'Antarctica glaciers icebergs travel', 'Antarctica mountains snow');
+  } else if (lower.includes('polo norte') || lower.includes('artico') || lower.includes('north pole')) {
+    variants.push('North Pole Arctic ice landscape', 'Arctic tundra ice travel');
+  }
+
+  // 2. Países Nórdicos y Escandinavia
+  else if (lower.includes('noruega') || lower.includes('oslo') || lower.includes('bergen') || lower.includes('tromso') || lower.includes('lofoten') || lower.includes('norway')) {
+    variants.push('Norway fjords landscape travel', 'Lofoten Norway landscape travel', 'Oslo Norway travel cityscape', 'Norway nature mountains');
+  } else if (lower.includes('islandia') || lower.includes('reykjavik') || lower.includes('iceland')) {
+    variants.push('Iceland waterfalls landscape travel', 'Iceland nature volcanoes', 'Reykjavik Iceland travel');
+  } else if (lower.includes('suecia') || lower.includes('estocolmo') || lower.includes('sweden')) {
+    variants.push('Stockholm Sweden travel cityscape', 'Sweden landscape nature');
+  } else if (lower.includes('finlandia') || lower.includes('helsinki') || lower.includes('laponia') || lower.includes('finland')) {
+    variants.push('Lapland Finland aurora snow travel', 'Helsinki Finland travel');
+  } else if (lower.includes('dinamarca') || lower.includes('copenhague') || lower.includes('denmark')) {
+    variants.push('Copenhagen Denmark Nyhavn travel', 'Denmark architecture travel');
+  }
+
+  // 3. Europa del Este y Rusia
+  else if (lower.includes('rusia') || lower.includes('moscu') || lower.includes('san petersburgo') || lower.includes('russia')) {
+    variants.push('Russia Moscow Saint Petersburg travel landscape', 'Moscow Red Square travel', 'Saint Petersburg Russia canals travel');
+  } else if (lower.includes('polonia') || lower.includes('varsovia') || lower.includes('cracovia') || lower.includes('poland')) {
+    variants.push('Krakow Poland travel old town', 'Warsaw Poland architecture travel');
+  } else if (lower.includes('republica checa') || lower.includes('praga') || lower.includes('prague')) {
+    variants.push('Prague Czech Republic Charles Bridge travel', 'Prague historic cityscape');
+  } else if (lower.includes('hungria') || lower.includes('budapest') || lower.includes('hungary')) {
+    variants.push('Budapest Hungary Danube parliament travel');
+  }
+
+  // 4. Europa Occidental y Mediterráneo
+  else if (lower.includes('paris') || lower.includes('francia') || lower.includes('france') || lower.includes('niza') || lower.includes('lyon')) {
+    variants.push('Paris France travel landmark architecture', 'Eiffel Tower Paris France travel', 'France landscape travel');
+  } else if (lower.includes('madrid')) {
+    variants.push('Madrid Spain travel landmark architecture', 'Madrid Gran Via Retiro travel');
+  } else if (lower.includes('barcelona') || lower.includes('cataluna')) {
+    variants.push('Barcelona Spain architecture Sagrada Familia travel', 'Barcelona Spain coast travel');
+  } else if (lower.includes('sevilla') || lower.includes('granada') || lower.includes('andalucia') || lower.includes('espana') || lower.includes('spain')) {
+    variants.push('Seville Spain Plaza de Espana travel', 'Spain travel landmark architecture', 'Andalucia Spain travel');
+  } else if (lower.includes('roma') || lower.includes('coliseo') || lower.includes('vaticano')) {
+    variants.push('Rome Italy Colosseum travel landmark', 'Rome Italy historic architecture');
+  } else if (lower.includes('venecia') || lower.includes('venice')) {
+    variants.push('Venice Italy canals gondola travel', 'Venice Italy architecture');
+  } else if (lower.includes('florencia') || lower.includes('florence') || lower.includes('toscana')) {
+    variants.push('Florence Italy Duomo Tuscany travel', 'Tuscany Italy landscape');
+  } else if (lower.includes('milan') || lower.includes('italia') || lower.includes('italy') || lower.includes('amalfitana')) {
+    variants.push('Amalfi Coast Italy travel ocean', 'Milan Italy Duomo architecture', 'Italy travel landscape');
+  } else if (lower.includes('londres') || lower.includes('inglaterra') || lower.includes('london') || lower.includes('uk') || lower.includes('reino unido')) {
+    variants.push('London England travel UK Big Ben', 'London architecture UK travel');
+  } else if (lower.includes('escocia') || lower.includes('edimburgo') || lower.includes('scotland')) {
+    variants.push('Scotland highlands landscape travel', 'Edinburgh Scotland castle travel');
+  } else if (lower.includes('berlin') || lower.includes('alemania') || lower.includes('munich') || lower.includes('germany') || lower.includes('baviera')) {
+    variants.push('Berlin Germany travel Brandenburg landmark', 'Bavaria Germany castle landscape travel', 'Germany travel landscape');
+  } else if (lower.includes('suiza') || lower.includes('alpes') || lower.includes('zurich') || lower.includes('switzerland')) {
+    variants.push('Switzerland Alps landscape mountains travel', 'Swiss Alps village travel');
+  } else if (lower.includes('austria') || lower.includes('viena') || lower.includes('salzburgo')) {
+    variants.push('Vienna Austria architecture travel', 'Austrian Alps landscape travel');
+  } else if (lower.includes('amsterdam') || lower.includes('holanda') || lower.includes('paises bajos') || lower.includes('netherlands')) {
+    variants.push('Amsterdam Netherlands canals travel', 'Netherlands travel landscape');
+  } else if (lower.includes('portugal') || lower.includes('lisboa') || lower.includes('porto')) {
+    variants.push('Lisbon Portugal travel architecture tram', 'Porto Portugal river travel');
+  } else if (lower.includes('grecia') || lower.includes('atenas') || lower.includes('santorini') || lower.includes('greece')) {
+    variants.push('Santorini Greece travel ocean landscape', 'Athens Greece Acropolis travel landmark');
+  }
+
+  // 5. Norteamérica
+  else if (lower.includes('nueva york') || lower.includes('new york') || lower.includes('manhattan') || lower.includes('nyc')) {
+    variants.push('New York City skyline travel landmark', 'Manhattan Central Park travel');
+  } else if (lower.includes('miami') || lower.includes('orlando') || lower.includes('florida')) {
+    variants.push('Miami Beach ocean Florida travel', 'Miami skyline palm trees');
+  } else if (lower.includes('san francisco') || lower.includes('california') || lower.includes('los angeles')) {
+    variants.push('Golden Gate Bridge San Francisco California travel', 'Los Angeles California travel');
+  } else if (lower.includes('estados unidos') || lower.includes('usa') || lower.includes('eeuu') || lower.includes('chicago') || lower.includes('hawaii')) {
+    variants.push('USA national park travel landscape', 'Hawaii beach ocean landscape travel', 'Chicago skyline travel');
+  } else if (lower.includes('canada') || lower.includes('vancouver') || lower.includes('toronto') || lower.includes('banff')) {
+    variants.push('Banff National Park Canada mountains lake landscape', 'Canada travel nature mountains');
+  } else if (lower.includes('mexico') || lower.includes('cancun') || lower.includes('tulum') || lower.includes('riviera maya')) {
+    variants.push('Cancun Mexico turquoise beach ocean landscape', 'Tulum Mexico beach Mayan ruins');
+  } else if (lower.includes('oaxaca') || lower.includes('guadalajara') || lower.includes('cdmx')) {
+    variants.push('Mexico travel historic colonial architecture', 'Mexico City historic center travel');
+  }
+
+  // 6. Sudamérica y Caribe
+  else if (lower.includes('bariloche') || lower.includes('nahuel huapi')) {
+    variants.push('Bariloche Argentina Nahuel Huapi lake mountains Patagonia', 'Bariloche travel Patagonia');
+  } else if (lower.includes('mendoza')) {
+    variants.push('Mendoza Argentina vineyards Andes mountains wine', 'Mendoza wine travel');
+  } else if (lower.includes('buenos aires') || lower.includes('argentina') || lower.includes('palermo') || lower.includes('recoleta')) {
+    variants.push('Buenos Aires Argentina travel cityscape', 'Caminito La Boca Buenos Aires travel');
+  } else if (lower.includes('rio de janeiro') || lower.includes('copacabana') || lower.includes('ipanema') || lower.includes('brasil') || lower.includes('brazil')) {
+    variants.push('Rio de Janeiro Brazil Christ Redeemer beach landscape', 'Brazil travel beach tropical landscape');
+  } else if (lower.includes('cusco') || lower.includes('machu picchu') || lower.includes('valle sagrado')) {
+    variants.push('Machu Picchu Cusco Peru Andes mountains travel', 'Cusco Peru historic travel');
+  } else if (lower.includes('lima') || lower.includes('peru')) {
+    variants.push('Cusco Peru travel landmark', 'Lima Peru coast Miraflores travel');
+  } else if (lower.includes('cartagena') || lower.includes('colombia') || lower.includes('medellin') || lower.includes('bogota')) {
+    variants.push('Cartagena Colombia colonial architecture travel', 'Colombia coffee region landscape');
+  } else if (lower.includes('costa rica')) {
+    variants.push('Costa Rica rainforest nature wildlife travel', 'Costa Rica beach landscape');
+  }
+
+  // 7. Asia, Oceanía y Medio Oriente
+  else if (lower.includes('tokio') || lower.includes('tokyo') || lower.includes('shibuya') || lower.includes('shinjuku')) {
+    variants.push('Tokyo Japan travel skyline cityscape', 'Tokyo Japan Sensoji temple Shibuya');
+  } else if (lower.includes('kioto') || lower.includes('kyoto') || lower.includes('japon') || lower.includes('japan') || lower.includes('osaka')) {
+    variants.push('Kyoto Japan traditional temples bamboo forest travel', 'Mount Fuji Japan landscape travel', 'Japan travel traditional');
+  } else if (lower.includes('china') || lower.includes('beijing') || lower.includes('shanghai')) {
+    variants.push('Great Wall of China travel landmark', 'Shanghai China skyline travel');
+  } else if (lower.includes('corea') || lower.includes('seul') || lower.includes('seoul')) {
+    variants.push('Seoul South Korea travel palace cityscape');
+  } else if (lower.includes('tailandia') || lower.includes('bangkok') || lower.includes('phuket') || lower.includes('thailand')) {
+    variants.push('Thailand travel tropical beach temples', 'Bangkok Thailand grand palace travel');
+  } else if (lower.includes('indonesia') || lower.includes('bali')) {
+    variants.push('Bali Indonesia temples beach nature travel');
+  } else if (lower.includes('vietnam') || lower.includes('hanoi') || lower.includes('ha long')) {
+    variants.push('Ha Long Bay Vietnam landscape travel');
+  } else if (lower.includes('india') || lower.includes('delhi') || lower.includes('taj mahal')) {
+    variants.push('Taj Mahal Agra India travel landmark');
+  } else if (lower.includes('egipto') || lower.includes('el cairo') || lower.includes('piramides') || lower.includes('egypt')) {
+    variants.push('Egypt pyramids Giza Cairo travel landmark', 'Nile river Egypt travel landscape');
+  } else if (lower.includes('dubai') || lower.includes('emiratos') || lower.includes('abu dhabi')) {
+    variants.push('Dubai UAE modern skyline Burj Khalifa travel');
+  } else if (lower.includes('turquia') || lower.includes('estambul') || lower.includes('capadocia') || lower.includes('turkey')) {
+    variants.push('Cappadocia Turkey hot air balloons landscape travel', 'Istanbul Turkey Bosphorus travel landmark');
+  } else if (lower.includes('australia') || lower.includes('sidney') || lower.includes('sydney') || lower.includes('melbourne')) {
+    variants.push('Sydney Australia Opera House travel landmark', 'Australia coast landscape nature travel');
+  } else if (lower.includes('nueva zelanda') || lower.includes('new zealand') || lower.includes('queenstown')) {
+    variants.push('New Zealand mountains fjords landscape nature travel');
+  }
+
+  // 8. Destinos de Chile
+  else if (lower.includes('atacama') || lower.includes('san pedro') || lower.includes('luna') || lower.includes('cejar') || lower.includes('tatio')) {
+    variants.push('San Pedro de Atacama Chile desert landscape', 'Atacama Desert Chile starry night sky', 'Valle de la Luna Atacama Chile');
+  } else if (lower.includes('paine') || lower.includes('natales') || (lower.includes('patagonia') && !lower.includes('argentina'))) {
+    variants.push('Torres del Paine Chile Patagonia mountains lake', 'Patagonia Chile landscape nature trekking');
+  } else if (lower.includes('pucon') || lower.includes('villarrica') || lower.includes('caburgua')) {
+    variants.push('Villarrica Volcano Pucon Chile lake mountains', 'Pucon Chile lake nature landscape');
+  } else if (lower.includes('valdivia') || lower.includes('corral') || lower.includes('niebla')) {
+    variants.push('Valdivia Chile river landscape nature', 'Valdivia Chile bridges ocean');
+  } else if (lower.includes('puerto varas') || lower.includes('frutillar') || lower.includes('llanquihue') || lower.includes('osorno')) {
+    variants.push('Puerto Varas Osorno Volcano Chile lake Llanquihue', 'Frutillar Chile lake theater mountains');
+  } else if (lower.includes('chiloe') || lower.includes('castro') || lower.includes('ancud') || lower.includes('dalcahue')) {
+    variants.push('Chiloe Island Chile palafitos wooden churches', 'Castro Chiloe Chile ocean palafitos');
+  } else if (lower.includes('valparaiso') || lower.includes('valpo') || lower.includes('vina') || lower.includes('alegre') || lower.includes('concepcion')) {
+    variants.push('Valparaiso Chile colorful hills harbor ocean', 'Cerro Alegre Valparaiso Chile architecture');
+  } else if (lower.includes('santiago') || lower.includes('providencia') || lower.includes('bellavista') || lower.includes('cristobal') || lower.includes('costanera')) {
+    variants.push('Santiago Chile Andes mountains cityscape skyline', 'Santiago de Chile Andes sunset');
+  } else if (lower.includes('iquique') || lower.includes('arica') || lower.includes('cavancha')) {
+    variants.push('Iquique Chile beach ocean coast Cavancha', 'Arica Chile coast Morro landscape');
+  } else if (lower.includes('la serena') || lower.includes('coquimbo') || lower.includes('elqui')) {
+    variants.push('La Serena Chile beach ocean coast', 'Elqui Valley Chile mountains vineyards');
+  } else if (lower.includes('punta arenas') || lower.includes('magallanes')) {
+    variants.push('Punta Arenas Chile Magellan Strait Patagonia');
+  } else if (lower.includes('coyhaique') || lower.includes('carretera austral') || lower.includes('aysen')) {
+    variants.push('Carretera Austral Chile Patagonia nature landscape', 'Aysen Chile marble caves');
+  } else if (lower.includes('rapa nui') || lower.includes('pascua') || lower.includes('moai')) {
+    variants.push('Easter Island Rapa Nui Moai statues sunset Chile', 'Rapa Nui landscape ocean Chile');
+  }
+
+  // 9. Si no cayó en ninguna regla anterior, construir variante inteligente en inglés
+  if (variants.length === 0) {
+    const sanitized = clean.replace(/[^\w\s]/gi, ' ').trim();
+    if (sanitized.length >= 3) {
+      variants.push(`${sanitized} travel landscape tourism`, `${sanitized} landmark architecture nature`);
+    }
+  }
+
+  // Agregar la query limpia al final como respaldo directo
+  if (clean && !variants.includes(clean)) {
+    variants.push(clean);
+  }
+
+  return variants;
+}
 
 /**
  * Searches Pexels API for real travel photos matching query.
@@ -24,54 +208,14 @@ export async function searchPexelsPhotos(
 ): Promise<PexelsPhotoResult[]> {
   const apiKey = getPexelsKey();
   if (!apiKey) {
-    console.warn('[Pexels] No API key available');
+    console.warn('[Pexels] PEXELS_API_KEY no configurada en .env. Continuando con fallback curado.');
     return [];
   }
 
   const cleanQuery = query.trim();
   if (!cleanQuery) return [];
 
-  const cacheKey = `${cleanQuery.toLowerCase()}_${count}`;
-  if (cache.has(cacheKey)) {
-    return cache.get(cacheKey)!;
-  }
-
-  const strippedParentheses = cleanQuery.replace(/\([^)]*\)/g, '').trim();
-  const lower = cleanQuery
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-
-  // Generate intelligent search variants
-  const variants: string[] = [];
-  if (lower.includes('atacama') || lower.includes('san pedro')) {
-    variants.push('San Pedro de Atacama Chile', 'Atacama Desert Chile');
-  } else if (lower.includes('valparaiso') || lower.includes('valpo') || lower.includes('vina')) {
-    variants.push('Valparaiso Chile', 'Cerro Alegre Valparaiso');
-  } else if (lower.includes('paine') || lower.includes('patagonia') || lower.includes('natales')) {
-    variants.push('Torres del Paine Chile', 'Patagonia Chile');
-  } else if (lower.includes('pucon') || lower.includes('villarrica') || lower.includes('varas') || lower.includes('valdivia')) {
-    variants.push('Villarrica Volcano Pucon Chile', 'Pucon Lake Chile');
-  } else if (lower.includes('chiloe') || lower.includes('castro') || lower.includes('ancud')) {
-    variants.push('Castro Chiloe Palafitos Chile', 'Chiloe Island Chile');
-  } else if (lower.includes('santiago') || lower.includes('providencia') || lower.includes('bellavista')) {
-    variants.push('Santiago Chile Andes Skyline', 'Santiago de Chile');
-  } else if (lower.includes('cusco') || lower.includes('peru') || lower.includes('machu')) {
-    variants.push('Cusco Machu Picchu Peru', 'Cusco Peru');
-  } else if (lower.includes('tokio') || lower.includes('tokyo') || lower.includes('japon')) {
-    variants.push('Tokyo Japan Skyline', 'Shinjuku Tokyo Japan');
-  } else if (lower.includes('roma') || lower.includes('italia')) {
-    variants.push('Rome Colosseum Italy', 'Rome Italy');
-  } else if (lower.includes('buenos aires') || lower.includes('argentina')) {
-    variants.push('Buenos Aires Argentina', 'Caminito Buenos Aires');
-  }
-
-  if (strippedParentheses && !variants.includes(strippedParentheses)) {
-    variants.push(strippedParentheses);
-  }
-  if (!variants.includes(cleanQuery)) {
-    variants.push(cleanQuery);
-  }
+  const variants = buildPexelsSearchVariants(cleanQuery);
 
   for (const q of variants) {
     try {
@@ -80,7 +224,7 @@ export async function searchPexelsPhotos(
         headers: {
           Authorization: apiKey,
         },
-        signal: AbortSignal.timeout(3500),
+        signal: AbortSignal.timeout(4500),
       });
 
       if (!res.ok) {
@@ -96,7 +240,6 @@ export async function searchPexelsPhotos(
           alt: p.alt || q,
         }));
 
-        cache.set(cacheKey, results);
         return results;
       }
     } catch (err) {

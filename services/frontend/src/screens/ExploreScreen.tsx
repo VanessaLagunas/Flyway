@@ -6,10 +6,10 @@ import { ODCInput } from '../odc-components/ODCInput';
 import { ODCSegmentedControl } from '../odc-components/ODCSegmentedControl';
 import { ODCChipGroup } from '../odc-components/ODCChipGroup';
 import { ODCButton } from '../odc-components/ODCButton';
-import { ODCDateRangePicker, getTodayISO, addDaysISO, formatFriendlyDate } from '../odc-components/ODCDateRangePicker';
+import { ODCDateRangePicker, getTodayISO, addDaysISO } from '../odc-components/ODCDateRangePicker';
 import { getPexelsPhotoForDestination } from '../utils/photoUtils';
 import { getWeatherAndClothingForTrip, getBudgetTierInfo } from '../utils/weatherUtils';
-import { Sparkles, MapPin, Globe, Camera, Building2, Compass, ShieldCheck, CloudSun, Shirt, Wallet } from 'lucide-react';
+import { MapPin, Globe, Camera, Building2, Compass, Wallet } from 'lucide-react';
 
 export interface ExploreScreenProps {
   onPlanRoute: (formData: {
@@ -135,11 +135,11 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
     setPreviewPhoto(localPhoto);
 
     // If not in static catalog, also query backend Pexels API
-    if (!currentDest) {
+    if (!currentDest && destination.trim().length >= 3) {
       const timer = setTimeout(async () => {
         try {
           const bffUrl = (import.meta.env.VITE_BFF_URL as string) || 'http://localhost:4000/api/v1';
-          const res = await fetch(`${bffUrl}/photos?query=${encodeURIComponent(destination)}&count=1`);
+          const res = await fetch(`${bffUrl}/photos?query=${encodeURIComponent(destination.trim())}&count=1`);
           if (res.ok) {
             const data = await res.json();
             if (data.photos && data.photos.length > 0) {
@@ -365,9 +365,9 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
                   })}
                 </div>
 
-                {/* Detalle de la Comuna Seleccionada */}
+                {/* Detalle compacto de la Comuna Seleccionada */}
                 {selectedComuna && (
-                  <div className="p-2.5 rounded-lg bg-white border border-[#DCE8DC] text-xs mb-2.5">
+                  <div className="p-2.5 rounded-lg bg-white border border-[#DCE8DC] text-xs">
                     <div className="flex items-center justify-between mb-1">
                       <div className="font-bold text-[#1E1F19] flex items-center gap-1">
                         <Compass className="w-3.5 h-3.5 text-[#4A7C59]" />
@@ -377,98 +377,18 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
                         {selectedComuna.badge || 'Imperdible'}
                       </span>
                     </div>
-                    <p className="text-[11px] text-[#556358] mb-1.5">
+                    <p className="text-[11px] text-[#556358] m-0">
                       {selectedComuna.description}
                     </p>
-                    <div className="text-[11px] font-medium text-[#2F4F39] flex items-start gap-1">
-                      <span className="font-bold text-[#1E1F19] shrink-0">📍 Lugares clave:</span>
-                      <span className="text-[#366447]">
-                        {selectedComuna.highlights.slice(0, 3).join(' • ')}
-                      </span>
-                    </div>
                   </div>
                 )}
               </div>
             )}
-
-            {/* Previsualización Día por Día: CADA DÍA ES DIFERENTE */}
-            <div className="mt-2.5 pt-2.5 border-t border-[#4A7C59]/20">
-              <div className="flex items-center justify-between mb-1.5">
-                <div className="text-xs font-bold text-[#1E1F19] flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-[#4A7C59]" />
-                  <span>Previsualización de Días (Sectores y Gastos Diferentes):</span>
-                </div>
-                <span className="text-[10px] font-bold text-[#4A7C59] bg-[#E1F2E2] px-2 py-0.5 rounded-full">
-                  Sin repetición
-                </span>
-              </div>
-
-              <div className="space-y-1.5 mb-2">
-                {currentDest.dailyPlans.slice(0, 3).map((dp) => {
-                  const dayCostForBudget =
-                    budget === 'budget'
-                      ? dp.costBudget
-                      : budget === 'premium'
-                      ? dp.costPremium
-                      : dp.costStandard;
-                  return (
-                    <div
-                      key={dp.dayNumber}
-                      className="p-2 rounded-lg bg-white/90 border border-[#DCE8DC] flex items-center justify-between gap-2 text-[11px]"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-bold text-white bg-[#4A7C59] w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px]">
-                          {dp.dayNumber}
-                        </span>
-                        <div className="min-w-0">
-                          <div className="font-bold text-[#1E1F19] truncate">
-                            {dp.sector}
-                          </div>
-                          <div className="text-[10px] text-[#6B6A63] truncate">
-                            {dp.activities.map(a => a.title).slice(0, 2).join(' • ')}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <span className="text-[9px] uppercase text-[#6B6A63] block font-medium">
-                          {budgetTier.label}
-                        </span>
-                        <span className="font-bold text-[#2F4F39] text-xs">
-                          ${dayCostForBudget.toLocaleString('es-CL')} CLP
-                        </span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              <div className="flex items-center gap-1.5 text-[10px] text-[#366447] font-semibold bg-[#EAF3EA] p-1.5 rounded-md">
-                <ShieldCheck className="w-3.5 h-3.5 text-[#4A7C59] shrink-0" />
-                <span>
-                  Cada día visita comunas/destinos diferentes y los montos en dinero se calculan según cada actividad.
-                </span>
-              </div>
-            </div>
-          </div>
-        ) : destination.trim().length > 1 ? (
-          <div className="my-2 p-2.5 rounded-xl border border-[var(--fw-border)] bg-[#FAF8F5] text-xs flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Compass className="w-4 h-4 text-[#4A7C59]" />
-              <div>
-                <span className="font-bold text-[#1E1F19]">Destino detectado: {destination}</span>
-                <p className="text-[10px] text-[#6B6A63]">
-                  La IA organizará cada día en barrios y atractivos diferentes con montos variados en CLP.
-                </p>
-              </div>
-            </div>
-            <span className="text-[10px] font-bold text-[#4A7C59] bg-[#E1F2E2] px-2 py-0.5 rounded-full shrink-0">
-              Días Únicos
-            </span>
           </div>
         ) : null}
 
         {/* Vista previa en vivo de fotografía del destino (sin texto sobrepuesto en la imagen) */}
-        {previewPhoto && (
+        {previewPhoto && destination.trim().length >= 3 && (
           <div className="mb-3.5 rounded-xl overflow-hidden border border-[var(--fw-border)] bg-[#FAF8F5] transition-all animate-fadeIn shadow-2xs">
             <div className="relative h-36 sm:h-44 w-full overflow-hidden bg-[#F1ECE2]">
               <img
@@ -516,65 +436,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
           />
         </div>
 
-        {/* Panel en Vivo: Estación, Clima según días seleccionados y Tip de Vestimenta */}
-        <div
-          id="explore-weather-clothing-panel"
-          className="mt-3.5 p-3.5 rounded-xl border border-[var(--fw-border)] bg-[#FAF8F5] text-xs space-y-2.5"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[var(--fw-border)]">
-            <div className="flex items-center gap-1.5 font-bold text-[#1E1F19] text-xs sm:text-sm">
-              <CloudSun className="w-4 h-4 text-[#4A7C59] shrink-0" />
-              <span>Clima y Estación para tus Fechas</span>
-            </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="px-2.5 py-0.5 rounded-full font-bold text-[11px] bg-[#E1F2E2] text-[#2F4F39] border border-[#4A7C59]/25">
-                {weatherInfo.seasonIcon} Estación viaje: {weatherInfo.season}
-              </span>
-              <span className="px-2 py-0.5 rounded-full font-semibold text-[10px] bg-[#F2E9D8] text-[#8B6F3E]">
-                Actual hoy: {weatherInfo.currentSeasonIcon} {weatherInfo.currentSeason}
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <div className="p-2.5 rounded-lg bg-white border border-[var(--fw-border)]">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-[var(--fw-text-muted)] mb-0.5">
-                Pronóstico ({formatFriendlyDate(startDate)} – {formatFriendlyDate(endDate)})
-              </div>
-              <div className="text-sm font-bold text-[#2F4F39] mb-0.5">
-                🌡️ {weatherInfo.temperatureRange}
-              </div>
-              <div className="text-[11px] font-semibold text-[#1E1F19] mb-1">
-                {weatherInfo.weatherCondition}
-              </div>
-              <p className="text-[11px] text-[var(--fw-text-muted)] m-0 leading-relaxed">
-                {weatherInfo.weatherSummary}
-              </p>
-            </div>
-
-            <div className="p-2.5 rounded-lg bg-white border border-[var(--fw-border)]">
-              <div className="flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-[#8B6F3E] mb-1">
-                <Shirt className="w-3.5 h-3.5 text-[#8B6F3E]" />
-                <span>¿Cómo ir vestido y qué usar?</span>
-              </div>
-              <p className="text-[11px] text-[#1E1F19] m-0 mb-2 leading-relaxed">
-                {weatherInfo.clothingTip}
-              </p>
-              <div className="flex flex-wrap gap-1">
-                {weatherInfo.clothingItems.map((item, idx) => (
-                  <span
-                    key={idx}
-                    className="text-[10px] font-medium px-2 py-0.5 rounded-md bg-[#F7F4ED] text-[#1E1F19] border border-[var(--fw-border)]"
-                  >
-                    {item}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Selector de Presupuesto con Rango de $ CLP y Descripción */}
+        {/* Selector de Presupuesto con Rango de $ CLP */}
         <div className="mt-4 mb-2 flex justify-between items-center">
           <label className="fw-label m-0 flex items-center gap-1.5">
             <Wallet className="w-3.5 h-3.5 text-[#4A7C59]" />
@@ -590,41 +452,19 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
           idPrefix="explore-budget"
         />
 
-        {/* Tarjeta explicativa del rango de $ y qué incluye el presupuesto seleccionado */}
+        {/* Resumen compacto del presupuesto seleccionado */}
         <div
           id="explore-budget-detail-card"
-          className="mt-2.5 p-3 rounded-xl border border-[#4A7C59]/25 bg-[#F4F9F4] text-xs transition-all"
+          className="mt-2.5 p-2.5 rounded-xl border border-[#4A7C59]/25 bg-[#F4F9F4] text-xs flex flex-wrap items-center justify-between gap-2"
         >
-          <div className="flex flex-wrap items-center justify-between gap-1.5 mb-1">
-            <span className="font-bold text-[#1E1F19] text-xs">
-              {budgetTier.shortTitle}
-            </span>
-            <span className="font-bold text-[#2F4F39] bg-white px-2.5 py-0.5 rounded-full border border-[#DCE8DC] text-[11px]">
-              Rango diario: {budgetTier.dailyRangeText}
-            </span>
-          </div>
-          <p className="text-[11px] text-[#556358] m-0 mb-2 leading-relaxed">
-            {budgetTier.description}
-          </p>
-          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-[#4A7C59]/15">
-            <div className="flex flex-wrap gap-1">
-              {budgetTier.highlights.map((hl, idx) => (
-                <span
-                  key={idx}
-                  className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-white text-[#2F4F39] border border-[#DCE8DC]"
-                >
-                  {hl}
-                </span>
-              ))}
-            </div>
-            <div className="text-[11px] font-bold text-[#1E1F19]">
-              Total est. ({weatherInfo.daysCount}d):{' '}
-              <span className="text-[#2F4F39]">
-                ${(budgetTier.minDailyClp * weatherInfo.daysCount).toLocaleString('es-CL')} – $
-                {(budgetTier.maxDailyClp * weatherInfo.daysCount).toLocaleString('es-CL')} CLP
-              </span>
-            </div>
-          </div>
+          <span className="font-semibold text-[#1E1F19] text-[11px]">
+            {budgetTier.shortTitle}
+          </span>
+          <span className="text-[11px] font-bold text-[#2F4F39]">
+            Total est. ({weatherInfo.daysCount}d): $
+            {(budgetTier.minDailyClp * weatherInfo.daysCount).toLocaleString('es-CL')} – $
+            {(budgetTier.maxDailyClp * weatherInfo.daysCount).toLocaleString('es-CL')} CLP
+          </span>
         </div>
 
         <div className="mt-4">

@@ -24,11 +24,28 @@ El proyecto se desacopla en **5 contenedores independientes** orquestados median
 
 * **Base de Datos:** PostgreSQL 16 (Tablas relacionales + columnas `JSONB` para itinerarios dinámicos y caché de Pexels).
 
-* **Integraciones Externas:** Google Gemini SDK (`@google/genai`), OpenRouter API y Pexels API.
+* **Integraciones Externas:** Google Gemini SDK (`@google/genai`), OpenRouter API (`openrouter/free`), Pexels API y **Open-Meteo API** (Geocodificación y Clima en tiempo real/histórico sin API Key).
 
 * **API Testing as Code (QA):** **Bruno** (`.bru`) y **Bruno CLI** (`@usebruno/cli`) para pruebas de contrato, tiempos de respuesta y resiliencia.
 
 * **Infraestructura y CI/CD:** Entorno **Linux (WSL2 - Ubuntu)**, Docker & Docker Compose, **GitHub Actions** y **GitHub Container Registry (GHCR)**.
+
+## 🌦️ Sistema Meteorológico y Recomendación de Vestimenta
+
+El microservicio `ai-service` cuenta con un motor meteorológico híbrido (`services/ai-service/src/utils/weatherUtils.ts`) que opera de forma paralela a la generación de itinerarios para alimentar tanto a los modelos de IA como a la interfaz de usuario:
+
+1. **Resolución Geográfica (Geocoding):**
+   * Consulta una caché interna de coordenadas conocidas para destinos turísticos comunes de Chile y el mundo.
+   * Si el destino no está en caché, consulta dinámicamente la **API de Geocodificación de Open-Meteo** (`geocoding-api.open-meteo.com`) para obtener latitud, longitud y hemisferio (Norte/Sur).
+2. **Estrategia de Pronóstico Meteorológico Inteligente:**
+   * **Viajes próximos (dentro de los próximos 14 días):** Consulta el pronóstico en tiempo real mediante **Open-Meteo Forecast API** (`api.open-meteo.com/v1/forecast`), extrayendo mínimas/máximas diarias, probabilidad de lluvia, nieve y viento.
+   * **Viajes a futuro lejano (+14 días):** Consulta la climatología exacta de las mismas fechas en el último año disponible a través de **Open-Meteo Archive API** (`archive-api.open-meteo.com/v1/archive`), garantizando coherencia estacional astronómica según el hemisferio.
+   * **Fallback Climatológico Local:** Si las llamadas externas sufren un timeout (4.5s), activa un modelo predictivo offline por latitud y estación.
+3. **Generación de Vestimenta y Consejos de Viaje:**
+   * Evalúa temperatura mínima/máxima, presencia de nieve (`snowfall_sum`), lluvias (`precipitation_sum`) y ráfagas de viento.
+   * Sugiere automáticamente la lista de prendas recomendadas (`clothingItems`) y recomendaciones de viaje (`clothingTip`) adecuadas para cada destino.
+4. **Sin API Key ni Costos:**
+   * Open-Meteo es de libre acceso y no requiere token ni tarjeta de crédito, lo que garantiza disponibilidad permanente sin costo de operación.
 
 ## 📋 Requisitos Previos
 
@@ -194,10 +211,171 @@ flyway/
 │   ├── bruno.json
 │   ├── environments/          # Entornos local.bru y cloud.bru
 │   └── tests/                 # Casos de prueba y assertions (Health, Destinos, IA Fallback)
+├── k8s/                       # Manifiestos de Kubernetes para despliegue en Google Cloud (GCP / GKE)
+│   ├── configmap.yaml         # Variables de configuración interna y URLs DNS
+│   ├── secret.example.yaml    # Plantilla de secretos (JWT, API Keys, DB Pass)
+│   ├── postgres.yaml          # StatefulSet/Deployment + PVC persistente para PostgreSQL
+│   ├── auth-service.yaml      # Deployment + ClusterIP para Auth Service
+│   ├── ai-service.yaml        # Deployment + ClusterIP para AI Service
+│   ├── catalog-service.yaml   # Deployment + ClusterIP para Catalog Service
+│   ├── bff-service.yaml       # Deployment + ClusterIP para BFF Gateway
+│   ├── frontend.yaml          # Deployment + Service LoadBalancer para UI React
+│   └── ingress.yaml           # Ingress HTTP(S) opcional para GCP Load Balancer
 ├── .github/
 │   └── workflows/
-│       └── ci-cd.yml          # Pipeline automatizado CI/CD en GitHub Actions
+│       └── ci-cd.yml          # Pipeline automatizado CI/CD en GitHub Actions (Build, Test, Push GHCR, Deploy GKE)
 ├── .env.example               # Plantilla de variables de entorno
-└── docker-compose.yml         # Orquestador de los 5 contenedores, volúmenes y red interna
+└── docker-compose.yml         # Orquestador local de los 6 contenedores, volúmenes y red interna
 
+```
+
+## ☸️ Guía Completa de Despliegue en Google Cloud Platform (GKE - Kubernetes)
+
+Sigue estos pasos en orden para levantar la plataforma por primera vez en GCP:
+
+---
+
+### Paso 1: Crear el Clúster de Kubernetes en Google Cloud (GKE)
+
+Puedes crearlo desde la consola de GCP o mediante la terminal con `gcloud`:
+
+```bash
+# Definir variables de tu entorno
+export PROJECT_ID="tu-gcp-project-id"
+export CLUSTER_NAME="flyway-cluster"
+export REGION="us-central1" # O "southamerica-west1" (Santiago, Chile)
+
+# 1. Configurar el proyecto
+gcloud config set project $PROJECT_ID
+
+# 2. Habilitar las APIs requeridas
+gcloud services enable container.googleapis.com containerregistry.googleapis.com
+
+# 3. Crear el clúster GKE (Modo Autopilot recomendado: menor costo y administración automática)
+gcloud container clusters create-auto $CLUSTER_NAME \
+  --region $REGION \
+  --project $PROJECT_ID
+```
+
+*(Si prefieres hacerlo por la Consola Web de GCP: Ve a **Kubernetes Engine > Clústeres > Crear**, selecciona **GKE Autopilot**, elige tu región y haz clic en **Crear**).*
+
+---
+
+### Paso 2: Crear la Service Account para GitHub Actions
+
+GitHub Actions necesita permisos para conectarse a tu clúster de Kubernetes:
+
+```bash
+# 1. Crear la Service Account
+gcloud iam service-accounts create github-actions-gke \
+  --description="Service Account para despliegues CI/CD desde GitHub Actions" \
+  --display-name="github-actions-gke"
+
+# 2. Asignarle el rol de desarrollador de Kubernetes Engine
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+  --member="serviceAccount:github-actions-gke@${PROJECT_ID}.iam.gserviceaccount.com" \
+  --role="roles/container.developer"
+
+# 3. Generar y descargar la clave JSON de autenticación
+gcloud iam service-accounts keys create gcp-key.json \
+  --iam-account=github-actions-gke@${PROJECT_ID}.iam.gserviceaccount.com
+```
+
+> [!CAUTION]
+> El archivo `gcp-key.json` contiene credenciales de acceso. **No lo subas al repositorio git**. Cópialo a los Secrets de GitHub y luego elimínalo de tu disco local.
+
+---
+
+### Paso 3: Configurar Secretos y Variables en GitHub
+
+En tu repositorio de GitHub, dirígete a **Settings > Secrets and variables > Actions**:
+
+#### A. En la pestaña "Secrets" (Repository Secrets):
+1. **`GCP_SA_KEY`**: Abre el archivo `gcp-key.json`, copia todo su contenido de texto y pégalo aquí.
+
+#### B. En la pestaña "Variables" (Repository Variables):
+1. **`GKE_CLUSTER_NAME`**: Nombre de tu clúster (ejemplo: `flyway-cluster`).
+2. **`GKE_REGION`**: Región de tu clúster (ejemplo: `us-central1` o `southamerica-west1`).
+3. **`GCP_PROJECT_ID`**: ID de tu proyecto en Google Cloud (ejemplo: `mi-proyecto-12345`).
+
+---
+
+### Paso 4: Inicialización Única en el Clúster (Secretos de BD y Esquema SQL)
+
+Antes del primer despliegue, conecta tu terminal al clúster para cargar los secretos de aplicación y las tablas de PostgreSQL:
+
+```bash
+# 1. Conectar tu terminal local a GKE
+gcloud container clusters get-credentials $CLUSTER_NAME --region $REGION --project $PROJECT_ID
+
+# 2. Configurar los Secretos de la Aplicación
+cp k8s/secret.example.yaml k8s/secret.yaml
+```
+
+Edita `k8s/secret.yaml` con tus contraseñas y claves de API reales:
+* `POSTGRES_PASSWORD`: Contraseña segura para PostgreSQL.
+* `JWT_SECRET`: Llave secreta para firmar tokens JWT.
+* `GEMINI_API_KEY`: Tu API Key de Google Gemini.
+* `OPENROUTER_API_KEY`: Tu API Key de OpenRouter (opcional).
+* `OPENAI_API_KEY`: Tu API Key de OpenAI (opcional).
+* `PEXELS_API_KEY`: Tu API Key de Pexels para fotos (opcional).
+
+Luego aplícalo al clúster:
+```bash
+kubectl apply -f k8s/secret.yaml
+
+# 3. Cargar el script DDL e inicialización de la Base de Datos (init.sql)
+kubectl create configmap postgres-init-sql --from-file=database/init.sql
+```
+
+---
+
+### Paso 5: Despliegue de los Microservicios
+
+Tienes dos formas de desplegar:
+
+#### Opción A: Despliegue Automático con CI/CD (Recomendado)
+Haz un commit y push a la rama principal:
+```bash
+git add .
+git commit -m "feat: configuracion gke y pipeline de despliegue"
+git push origin main
+```
+El pipeline de GitHub Actions compilará las 5 imágenes Docker, ejecutará las pruebas en Bruno, las subirá a GHCR y desplegará automáticamente en GKE.
+
+#### Opción B: Despliegue Manual con Kubectl
+```bash
+kubectl apply -f k8s/
+```
+
+---
+
+### Paso 6: Verificar el Estado y Obtener la URL Pública
+
+```bash
+# 1. Revisar que los 6 Pods estén en estado Running
+kubectl get pods
+
+# 2. Obtener la IP pública externa asignada al Frontend
+kubectl get service frontend
+```
+
+En la salida de `kubectl get service frontend`, verás la columna `EXTERNAL-IP`:
+```text
+NAME       TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)
+frontend   LoadBalancer   10.128.5.20    34.120.45.67    80:31234/TCP
+```
+
+Abre tu navegador en `http://<EXTERNAL-IP>` (ejemplo: `http://34.120.45.67`) y Flyway estará completamente operativo en Google Cloud.
+
+#### Comandos útiles para monitoreo:
+```bash
+# Ver logs en tiempo real de cualquier servicio:
+kubectl logs -l app=bff-service -f
+kubectl logs -l app=ai-service -f
+kubectl logs -l app=catalog-service -f
+kubectl logs -l app=postgres-db -f
+
+# Reiniciar un servicio si cambiaste variables:
+kubectl rollout restart deployment/bff-service
 ```

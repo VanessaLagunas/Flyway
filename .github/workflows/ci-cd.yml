@@ -189,23 +189,65 @@ jobs:
             ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-catalog-service:${{ github.sha }}
 
   # -------------------------------------------------------------
-  # Etapa 4: Despliegue Automatizado por SSH al VPS de 1GB RAM
+  # Etapa 4: Despliegue Automatizado a Google Kubernetes Engine (GKE - GCP)
   # -------------------------------------------------------------
   deploy:
-    name: 4. Continuous Deployment (SSH VPS 1GB RAM)
+    name: 4. Continuous Deployment (GCP GKE)
     runs-on: ubuntu-latest
     needs: build-and-push
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     steps:
-      - name: Despliegue remoto sobre VPS Linux (pull + up con docker-compose.prod.yml)
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Normalizar owner en minúsculas para GHCR
+        id: owner_lc
+        run: |
+          echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+      - name: Autenticación con Google Cloud (GCP)
+        uses: google-github-actions/auth@v2
         with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_SSH_KEY }}
-          port: ${{ secrets.DEPLOY_PORT || 22 }}
-          script: |
-            cd /opt/flyway || cd ~/flyway
-            export GHCR_OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
-            docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
-            docker image prune -af
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Obtener credenciales del clúster GKE
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ vars.GKE_CLUSTER_NAME || secrets.GKE_CLUSTER_NAME }}
+          location: ${{ vars.GKE_REGION || secrets.GKE_REGION || 'us-central1' }}
+
+      - name: Configurar secreto de GHCR en Kubernetes
+        run: |
+          kubectl create secret docker-registry ghcr-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Aplicar manifiestos base de Kubernetes
+        run: |
+          kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/postgres.yaml
+          kubectl apply -f k8s/auth-service.yaml
+          kubectl apply -f k8s/ai-service.yaml
+          kubectl apply -f k8s/catalog-service.yaml
+          kubectl apply -f k8s/bff-service.yaml
+          kubectl apply -f k8s/frontend.yaml
+
+      - name: Actualizar imágenes con el SHA del commit actual
+        run: |
+          OWNER="${{ steps.owner_lc.outputs.owner }}"
+          SHA="${{ github.sha }}"
+          kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/$OWNER/flyway-frontend:$SHA
+          kubectl set image deployment/bff-service bff-service=${{ env.REGISTRY }}/$OWNER/flyway-bff:$SHA
+          kubectl set image deployment/auth-service auth-service=${{ env.REGISTRY }}/$OWNER/flyway-auth-service:$SHA
+          kubectl set image deployment/ai-service ai-service=${{ env.REGISTRY }}/$OWNER/flyway-ai-service:$SHA
+          kubectl set image deployment/catalog-service catalog-service=${{ env.REGISTRY }}/$OWNER/flyway-catalog-service:$SHA
+
+      - name: Verificar estado del despliegue (Rollout Status)
+        run: |
+          kubectl rollout status deployment/frontend --timeout=120s
+          kubectl rollout status deployment/bff-service --timeout=120s
+          kubectl rollout status deployment/auth-service --timeout=120s
+          kubectl rollout status deployment/ai-service --timeout=120s
+          kubectl rollout status deployment/catalog-service --timeout=120s

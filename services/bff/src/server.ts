@@ -24,7 +24,7 @@ interface AuthenticatedRequest extends Request {
   user?: AuthenticatedUser;
 }
 
-// Helper para llamadas con timeout
+// Helper para llamadas con timeout usando fetch nativo de Node.js 20
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 25000): Promise<globalThis.Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -174,6 +174,25 @@ app.post('/api/v1/auth/login', async (req: Request, res: Response) => {
   }
 });
 
+app.post('/api/v1/auth/google', async (req: Request, res: Response) => {
+  try {
+    const authRes = await fetchWithTimeout(
+      `${AUTH_SERVICE_URL}/google`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+      },
+      8000
+    );
+    const data = await authRes.json();
+    return res.status(authRes.status).json(data);
+  } catch (err: any) {
+    console.error('[BFF] Error en POST /api/v1/auth/google:', err.message);
+    return res.status(502).json({ error: 'Error de comunicación con auth-service', detail: err.message });
+  }
+});
+
 app.get('/api/v1/auth/me', async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization || '';
@@ -195,10 +214,14 @@ app.get('/api/v1/auth/me', async (req: Request, res: Response) => {
 
 // -------------------------------------------------------------
 // 3. Itinerary Generate (/api/v1/itinerary/generate)
+// Orquestación Asíncrona:
+//  1) Solicita itinerario a http://ai-service:4001/generate
+//  2) a) Inyecta síncronamente la foto desde http://catalog-service:4002/photos?destination=...
+//     b) En segundo plano (fire-and-forget no bloqueante), dispara POST http://catalog-service:4002/destinations/upsert
 // -------------------------------------------------------------
 async function handleGenerateItinerary(req: Request, res: Response) {
   try {
-    const { destination, startDate, endDate, budget, interests } = req.body;
+    const { destination, startDate, endDate, budget, interests } = req.body || {};
 
     if (!destination || typeof destination !== 'string' || !destination.trim()) {
       return res.status(400).json({ error: 'El parámetro destination es obligatorio y debe ser texto.' });
@@ -221,11 +244,135 @@ async function handleGenerateItinerary(req: Request, res: Response) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
-      30000
+      90000
     );
 
-    const data = await aiRes.json();
-    return res.status(aiRes.status).json(data);
+    const aiData = (await aiRes.json()) as any;
+    if (!aiRes.ok) {
+      return res.status(aiRes.status).json(aiData);
+    }
+
+    const targetDestination = String(aiData.destination || payload.destination).trim();
+
+    // (a) Consulta síncrona de fotografía a catalog-service (Cache-Aside en PostgreSQL)
+    try {
+      const photoRes = await fetchWithTimeout(
+        `${CATALOG_SERVICE_URL}/photos?destination=${encodeURIComponent(targetDestination)}&count=15`,
+        { method: 'GET' },
+        6000
+      );
+
+      if (photoRes.ok) {
+        const photoData = (await photoRes.json()) as any;
+        const photosList: any[] = Array.isArray(photoData.photos) && photoData.photos.length > 0
+          ? photoData.photos
+          : (photoData.photo ? [photoData.photo] : []);
+
+        const primaryPhoto = photosList[0] || photoData.photo;
+        const resolvedPhotoUrl =
+          primaryPhoto?.url ||
+          photoData.photoUrl ||
+          photoData.photo_url ||
+          photoData.photo?.url;
+        const resolvedPhotographer =
+          primaryPhoto?.photographer ||
+          photoData.photographer ||
+          photoData.photo?.photographer;
+        const resolvedPhotographerUrl =
+          primaryPhoto?.photographerUrl ||
+          photoData.photographerUrl ||
+          photoData.photo?.photographerUrl;
+
+        if (resolvedPhotoUrl) {
+          aiData.imageUrl = resolvedPhotoUrl;
+          aiData.photoUrl = resolvedPhotoUrl;
+          aiData.photo_url = resolvedPhotoUrl;
+          aiData.imagePhotographer = resolvedPhotographer || aiData.imagePhotographer;
+          aiData.imagePhotographerUrl = resolvedPhotographerUrl || aiData.imagePhotographerUrl;
+          aiData.photo = {
+            url: resolvedPhotoUrl,
+            photographer: resolvedPhotographer || 'Pexels Contributor',
+            photographerUrl: resolvedPhotographerUrl || 'https://www.pexels.com',
+            source: photoData.source || 'catalog-service',
+            cacheHit: Boolean(photoData.cacheHit),
+          };
+
+          if (aiData.trip && typeof aiData.trip === 'object') {
+            aiData.trip.imageUrl = resolvedPhotoUrl;
+            aiData.trip.photoUrl = resolvedPhotoUrl;
+            aiData.trip.imagePhotographer = resolvedPhotographer || aiData.trip.imagePhotographer;
+            aiData.trip.imagePhotographerUrl = resolvedPhotographerUrl || aiData.trip.imagePhotographerUrl;
+          }
+
+          // Inyección de fotografías auténticas del destino en cada día y actividades del itinerario
+          if (Array.isArray(aiData.days) && aiData.days.length > 0 && photosList.length > 0) {
+            aiData.days.forEach((day: any, dIdx: number) => {
+              const assignedDayPhoto = photosList[(dIdx + 1) % photosList.length] || photosList[0];
+              day.imageUrl = assignedDayPhoto.url;
+              day.imagePhotographer = assignedDayPhoto.photographer || 'Pexels Contributor';
+              day.imagePhotographerUrl = assignedDayPhoto.photographerUrl || 'https://www.pexels.com';
+
+              if (Array.isArray(day.items)) {
+                day.items.forEach((item: any, iIdx: number) => {
+                  if (item.type === 'activity' && item.data) {
+                    const assignedActPhoto = photosList[(dIdx * 3 + iIdx + 2) % photosList.length] || assignedDayPhoto;
+                    item.data.imageUrl = assignedActPhoto.url;
+                    item.data.imagePhotographer = assignedActPhoto.photographer || 'Pexels Contributor';
+                    item.data.imagePhotographerUrl = assignedActPhoto.photographerUrl || 'https://www.pexels.com';
+                  }
+                });
+              }
+            });
+
+            if (aiData.trip && Array.isArray(aiData.trip.days)) {
+              aiData.trip.days = aiData.days;
+            }
+          }
+        }
+      } else {
+        console.warn(`[BFF] catalog-service /photos devolvió HTTP ${photoRes.status}, conservando imagen de respaldo.`);
+      }
+    } catch (photoErr: any) {
+      console.warn(`[BFF] No se pudo obtener foto desde catalog-service (${photoErr?.message || photoErr}), usando imagen de respaldo.`);
+    }
+
+    // (b) Disparo en segundo plano (sin bloquear el HTTP 200 al frontend) hacia /destinations/upsert
+    const daysLen = Array.isArray(aiData.days) && aiData.days.length > 0 ? aiData.days.length : 1;
+    const upsertMetadata = {
+      destination: targetDestination,
+      name: targetDestination,
+      country: aiData.country || 'Chile',
+      region: aiData.region || 'Región de Chile',
+      commune: aiData.commune || targetDestination,
+      avgDailyCostCLP:
+        Number(aiData.avgDailyCostCLP) ||
+        Math.round((Number(aiData.totalEstimatedCostCLP ?? aiData.totalCost) || 50000) / daysLen),
+      tags: Array.isArray(aiData.tags) && aiData.tags.length > 0 ? aiData.tags : payload.interests,
+      description:
+        aiData.description ||
+        aiData.summary ||
+        `Destino turístico ${targetDestination}.`,
+    };
+
+    void fetchWithTimeout(
+      `${CATALOG_SERVICE_URL}/destinations/upsert`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(upsertMetadata),
+      },
+      5000
+    )
+      .then((upsertRes) => {
+        if (!upsertRes.ok) {
+          console.warn(`[BFF] Upsert en segundo plano en catalog-service respondió HTTP ${upsertRes.status}`);
+        }
+      })
+      .catch((upsertErr: any) => {
+        console.warn('[BFF] Error no bloqueante en upsert asíncrono de destino:', upsertErr?.message || upsertErr);
+      });
+
+    return res.status(200).json(aiData);
   } catch (err: any) {
     console.error('[BFF] Error conectando con ai-service:', err);
     return res.status(502).json({
@@ -238,8 +385,27 @@ async function handleGenerateItinerary(req: Request, res: Response) {
 app.post('/api/v1/itinerary/generate', handleGenerateItinerary);
 app.post('/api/plan-route', handleGenerateItinerary);
 
+app.get(['/api/v1/weather', '/api/weather'], async (req: Request, res: Response) => {
+  try {
+    const params = new URLSearchParams();
+    if (req.query.destination) params.set('destination', String(req.query.destination));
+    if (req.query.startDate) params.set('startDate', String(req.query.startDate));
+    if (req.query.endDate) params.set('endDate', String(req.query.endDate));
+
+    const weatherRes = await fetchWithTimeout(`${AI_SERVICE_URL}/weather?${params.toString()}`, {}, 8000);
+    const data = await weatherRes.json();
+    return res.status(weatherRes.status).json(data);
+  } catch (err: any) {
+    console.error('[BFF] Error consultando clima a ai-service:', err?.message || err);
+    return res.status(502).json({
+      error: 'Error de comunicación con ai-service para clima',
+      detail: err?.message,
+    });
+  }
+});
+
 // -------------------------------------------------------------
-// 4. Destinations (/api/v1/destinations)
+// 4. Destinations (/api/v1/destinations y /api/v1/destinations/upsert)
 // -------------------------------------------------------------
 async function handleGetDestinations(_req: Request, res: Response) {
   try {
@@ -258,20 +424,43 @@ async function handleGetDestinations(_req: Request, res: Response) {
 app.get('/api/v1/destinations', handleGetDestinations);
 app.get('/api/destinations', handleGetDestinations);
 
+app.post('/api/v1/destinations/upsert', async (req: Request, res: Response) => {
+  try {
+    const catRes = await fetchWithTimeout(
+      `${CATALOG_SERVICE_URL}/destinations/upsert`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(req.body),
+      },
+      8000
+    );
+    const data = await catRes.json();
+    return res.status(catRes.status).json(data);
+  } catch (err: any) {
+    console.error('[BFF] Error en POST /api/v1/destinations/upsert:', err);
+    return res.status(502).json({
+      error: 'Error de comunicación con catalog-service para upsert de destino',
+      detail: err.message,
+    });
+  }
+});
+
 // -------------------------------------------------------------
 // 5. Photos (/api/v1/photos)
 // -------------------------------------------------------------
 async function handleGetPhotos(req: Request, res: Response) {
   try {
-    const query = req.query.query as string;
+    const destinationOrQuery = (req.query.destination as string) || (req.query.query as string) || (req.query.q as string);
     const count = req.query.count as string;
 
-    if (!query) {
-      return res.status(400).json({ error: 'Parámetro query es requerido.' });
+    if (!destinationOrQuery) {
+      return res.status(400).json({ error: 'Parámetro destination o query es requerido.' });
     }
 
     const params = new URLSearchParams();
-    params.set('query', query);
+    params.set('destination', destinationOrQuery);
+    params.set('query', destinationOrQuery);
     if (count) params.set('count', count);
 
     const catRes = await fetchWithTimeout(`${CATALOG_SERVICE_URL}/photos?${params.toString()}`, {}, 10000);
@@ -334,6 +523,10 @@ app.post('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Re
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌐 Flyway API Gateway (BFF) corriendo en http://0.0.0.0:${PORT}`);
-});
+export { app };
+
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Flyway API Gateway (BFF) corriendo en http://0.0.0.0:${PORT}`);
+  });
+}

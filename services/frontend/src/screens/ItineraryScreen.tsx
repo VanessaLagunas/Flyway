@@ -15,6 +15,8 @@ import {
 } from '../utils/photoUtils';
 import {
   getWeatherAndClothingForTrip,
+  fetchWeatherAndClothingForTrip,
+  getSeasonIcon,
   getBudgetTierInfo,
   BUDGET_TIER_DETAILS,
 } from '../utils/weatherUtils';
@@ -75,6 +77,8 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
 
   const tripSeason = trip.season || computedWeather.season;
   const currentSeason = trip.currentSeason || computedWeather.currentSeason;
+  const tripSeasonIcon = getSeasonIcon(tripSeason);
+  const currentSeasonIcon = getSeasonIcon(currentSeason);
   const weatherCondition = trip.weatherCondition || computedWeather.weatherCondition;
   const temperatureRange = trip.temperatureRange || computedWeather.temperatureRange;
   const weatherSummary = trip.weatherSummary || computedWeather.weatherSummary;
@@ -282,7 +286,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
     setDeleteConfirmActivity(null);
   };
 
-  const handleApplyAdjustRoute = () => {
+  const handleApplyAdjustRoute = async () => {
     const regenerated = generateSmartTrip({
       destination: adjDest,
       startDate: adjStart,
@@ -291,10 +295,19 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
       interests: adjInterests,
     });
 
+    const liveWeather = await fetchWeatherAndClothingForTrip(adjDest, adjStart, adjEnd);
+
     onUpdateTrip({
       ...regenerated,
       id: trip.id,
       isFavorite: trip.isFavorite,
+      season: liveWeather.season,
+      currentSeason: liveWeather.currentSeason,
+      weatherCondition: liveWeather.weatherCondition,
+      temperatureRange: liveWeather.temperatureRange,
+      weatherSummary: liveWeather.weatherSummary,
+      clothingTip: liveWeather.clothingTip,
+      clothingItems: liveWeather.clothingItems,
       whyThisRoute: adjNotes
         ? `Ruta personalizada con ajuste solicitado: "${adjNotes}". ${regenerated.whyThisRoute}`
         : regenerated.whyThisRoute,
@@ -329,6 +342,12 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                 alt={trip.destination}
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
+                onError={(e) => {
+                  const fallback = getPexelsPhotoForDestination(trip.destination, 1);
+                  if (e.currentTarget.src !== fallback.url) {
+                    e.currentTarget.src = fallback.url;
+                  }
+                }}
               />
             </div>
             <div className="px-3.5 py-2 bg-[#FAF8F5] border-t border-[var(--fw-border)] flex items-center justify-between gap-2 text-xs text-stone-600">
@@ -368,7 +387,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
             {computedBudget.symbol} {computedBudget.label} · {budgetRangeText}
           </span>
           <span className="inline-flex items-center gap-1 bg-[#E1F2E2] text-[#264D33] px-2.5 py-1 rounded-full border border-[#C6E4C8] text-xs font-bold">
-            {computedWeather.seasonIcon} Estación viaje: {tripSeason}
+            {tripSeasonIcon} Estación viaje: {tripSeason}
           </span>
           {trip.generatedByModel && (
             <span className="text-[11px] font-medium text-[#366447] bg-[#FAF8F5] px-2.5 py-0.5 rounded-full border border-[var(--fw-border)] flex items-center gap-1 shadow-2xs">
@@ -392,11 +411,11 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                 Clima y Estación
               </span>
               <span className="text-[11px] font-semibold text-stone-600 bg-stone-100 px-2 py-0.5 rounded-full">
-                Hoy: {computedWeather.currentSeasonIcon} {currentSeason}
+                Hoy: {currentSeasonIcon} {currentSeason}
               </span>
             </div>
             <div className="text-sm font-extrabold text-[#1E1F19] mb-0.5">
-              {computedWeather.seasonIcon} {tripSeason} · 🌡️ {temperatureRange}
+              {tripSeasonIcon} {tripSeason} · 🌡️ {temperatureRange}
             </div>
             <div className="text-xs font-semibold text-[#366447] mb-1">
               {weatherCondition}
@@ -444,7 +463,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                 key={idx}
                 className="text-[11px] font-medium px-2.5 py-0.5 rounded-lg bg-white text-[#264D33] border border-[#C6E4C8]"
               >
-                🧥 {item}
+                {item}
               </span>
             ))}
           </div>
@@ -520,6 +539,12 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                       alt={day.title || `Día ${day.dayNumber}`}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        const fallback = getPexelsPhotoForDestination(trip.destination, dIdx + 2);
+                        if (e.currentTarget.src !== fallback.url) {
+                          e.currentTarget.src = fallback.url;
+                        }
+                      }}
                     />
                   </div>
 
@@ -533,7 +558,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                           📅 {day.dateFormatted}
                         </span>
                         <span className="text-xs font-bold text-[#366447] bg-[#E1F2E2]/60 px-2.5 py-1 rounded-full">
-                          {computedWeather.seasonIcon} {temperatureRange}
+                          {tripSeasonIcon} {temperatureRange}
                         </span>
                       </div>
 
@@ -617,7 +642,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
 
           <div className="fw-card">
             <h3 className="text-base font-bold m-0 mb-2 flex items-center gap-1.5">
-              <span>{computedWeather.seasonIcon}</span>
+              <span>{tripSeasonIcon}</span>
               <span>Clima en {tripSeason} y Qué Ropa Llevar</span>
             </h3>
             <p className="text-xs font-semibold text-[#264D33] m-0 mb-1">
@@ -706,6 +731,12 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                     alt={selectedDay.title || `Día ${selectedDay.dayNumber}`}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const fallback = getPexelsPhotoForDestination(trip.destination, (selectedDay.dayNumber || 1));
+                      if (e.currentTarget.src !== fallback.url) {
+                        e.currentTarget.src = fallback.url;
+                      }
+                    }}
                   />
                 </div>
                 <div className="px-3 py-1.5 bg-[#FAF8F5] border-t border-[var(--fw-border)] flex items-center justify-between text-[11px] text-stone-600">
@@ -757,6 +788,12 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                             alt={act.title}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform"
                             referrerPolicy="no-referrer"
+                            onError={(e) => {
+                              const fallback = getPexelsPhotoForDestination(trip.destination, 0);
+                              if (e.currentTarget.src !== fallback.url) {
+                                e.currentTarget.src = fallback.url;
+                              }
+                            }}
                           />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -808,6 +845,12 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                     alt={selectedActivity.title}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
+                    onError={(e) => {
+                      const fallback = getPexelsPhotoForDestination(trip.destination, 0);
+                      if (e.currentTarget.src !== fallback.url) {
+                        e.currentTarget.src = fallback.url;
+                      }
+                    }}
                   />
                 </div>
                 <div className="px-3 py-1.5 bg-[#FAF8F5] border-t border-[var(--fw-border)] flex items-center justify-between text-[11px] text-stone-600">

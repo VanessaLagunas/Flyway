@@ -6,6 +6,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_BFF_URL: http://localhost:4000/api/v1
+        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     container_name: flyway-frontend
     restart: unless-stopped
     ports:
@@ -51,6 +52,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://flyway:flyway_pass@postgres-db:5432/flyway_db
       JWT_SECRET: ${JWT_SECRET:-flyway-super-secret-jwt-key-2026}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     networks:
       - flyway-net
     depends_on:
@@ -69,8 +71,11 @@ services:
     environment:
       PORT: 4001
       NODE_ENV: production
-      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     networks:
       - flyway-net
 
@@ -110,7 +115,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U flyway -d flyway_db"]
+      test: [ "CMD-SHELL", "pg_isready -U flyway -d flyway_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
