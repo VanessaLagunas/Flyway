@@ -15,6 +15,6 @@ data:
   DATABASE_URL: "postgres://flyway:flyway_pass@postgres-db:5432/flyway_db"
   POSTGRES_DB: "flyway_db"
   POSTGRES_USER: "flyway"
-  OPENAI_MODEL: "gpt-4o-mini"
+  OPENAI_MODEL: "gpt-6-luna"
   OPENROUTER_MODEL: "openrouter/free"
   GOOGLE_CLIENT_ID: ""

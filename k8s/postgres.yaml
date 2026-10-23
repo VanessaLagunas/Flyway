@@ -31,13 +31,24 @@ spec:
           args:
             - "postgres"
             - "-c"
-            - "shared_buffers=64MB"
+            - "shared_buffers=128MB"
             - "-c"
             - "max_connections=50"
           ports:
             - containerPort: 5432
               name: postgres
+          # --- ASIGNACIÓN DE LOS 2GB DE MEMORIA ---
+          resources:
+            requests:
+              cpu: 250m
+              memory: 1Gi
+            limits:
+              cpu: 500m
+              memory: 2Gi
           env:
+            # --- EVITA EL CRASHLOOPBACKOFF POR LA CARPETA LOST+FOUND ---
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
             - name: POSTGRES_USER
               valueFrom:
                 configMapKeyRef:
