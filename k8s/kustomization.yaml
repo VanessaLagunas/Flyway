@@ -3,9 +3,11 @@ kind: Kustomization
 
 resources:
   - configmap.yaml
+  - postgres-init-configmap.yaml
   - postgres.yaml
   - auth-service.yaml
   - ai-service.yaml
   - catalog-service.yaml
   - bff-service.yaml
   - frontend.yaml
+  - backendconfig.yaml

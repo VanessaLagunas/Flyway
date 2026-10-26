@@ -96,20 +96,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       setShowGoogleModal(false);
       onLoginSuccess(authUser.email, authUser, data.token);
     } catch {
-      // Respaldo offline si el BFF no está disponible
-      const fallbackEmail = payload.email || 'viajero.google@gmail.com';
-      const fallbackName = payload.name || 'Viajero Google';
-      const offlineUser: AuthUser = {
-        id: 2,
-        email: fallbackEmail,
-        name: fallbackName,
-        auth_provider: 'google',
-      };
-      const offlineToken = 'google-offline-jwt-token';
-      localStorage.setItem('flyway_token', offlineToken);
-      localStorage.setItem('flyway_user', JSON.stringify(offlineUser));
-      setShowGoogleModal(false);
-      onLoginSuccess(offlineUser.email, offlineUser, offlineToken);
+      const isOfflineAllowed = (import.meta.env.VITE_ENABLE_OFFLINE_MODE as string) === 'true';
+      if (isOfflineAllowed) {
+        const fallbackEmail = payload.email || 'viajero.google@gmail.com';
+        const fallbackName = payload.name || 'Viajero Google';
+        const offlineUser: AuthUser = {
+          id: 2,
+          email: fallbackEmail,
+          name: fallbackName,
+          auth_provider: 'google',
+        };
+        const offlineToken = 'google-offline-jwt-token';
+        localStorage.setItem('flyway_token', offlineToken);
+        localStorage.setItem('flyway_user', JSON.stringify(offlineUser));
+        setShowGoogleModal(false);
+        onLoginSuccess(offlineUser.email, offlineUser, offlineToken);
+      } else {
+        setError('Error al comunicarse con el servicio de autenticación en la nube.');
+      }
     } finally {
       setIsGoogleLoading(false);
     }
@@ -195,15 +199,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
       onLoginSuccess(authUser.email, authUser, data.token);
     } catch {
-      // Modo offline/respaldo si el BFF aún no está levantado en entorno puramente estático
-      if (email.trim().toLowerCase() === 'demo@flyway.cl' && password === 'flyway123') {
+      const isOfflineAllowed = (import.meta.env.VITE_ENABLE_OFFLINE_MODE as string) === 'true';
+      if (isOfflineAllowed && email.trim().toLowerCase() === 'demo@flyway.cl' && password === 'flyway123') {
         const offlineUser: AuthUser = { id: 1, email: 'demo@flyway.cl', name: 'Viajero Demo' };
         const offlineToken = 'demo-offline-jwt-token';
         localStorage.setItem('flyway_token', offlineToken);
         localStorage.setItem('flyway_user', JSON.stringify(offlineUser));
         onLoginSuccess(offlineUser.email, offlineUser, offlineToken);
       } else {
-        setError('No se pudo conectar con el servidor de autenticación.');
+        setError('No se pudo conectar con el servidor de autenticación en la nube.');
       }
     } finally {
       setIsSubmitting(false);

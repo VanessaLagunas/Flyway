@@ -8,7 +8,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --format=cjs --minify --outfile=dist/index.cjs",
     "start": "node --max-old-space-size=96 dist/index.cjs",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/server.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

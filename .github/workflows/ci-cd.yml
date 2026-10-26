@@ -226,7 +226,12 @@ jobs:
 
       - name: Aplicar manifiestos base de Kubernetes
         run: |
+          # Asegurar existencia de flyway-secrets en el clúster para evitar fallos de inicio
+          if ! kubectl get secret flyway-secrets > /dev/null 2>&1; then
+            kubectl apply -f k8s/secret.example.yaml
+          fi
           kubectl apply -f k8s/configmap.yaml
+          kubectl apply -f k8s/postgres-init-configmap.yaml
           kubectl apply -f k8s/postgres.yaml
           kubectl apply -f k8s/auth-service.yaml
           kubectl apply -f k8s/ai-service.yaml

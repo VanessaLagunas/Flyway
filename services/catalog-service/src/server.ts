@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
@@ -9,6 +10,8 @@ import {
 } from './photoService';
 
 dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4002;

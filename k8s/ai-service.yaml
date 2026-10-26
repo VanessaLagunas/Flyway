@@ -39,11 +39,35 @@ spec:
                 configMapKeyRef:
                   name: flyway-config
                   key: OPENAI_MODEL
+            - name: OPENAI_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: flyway-config
+                  key: OPENAI_TIMEOUT_MS
+                  optional: true
             - name: OPENROUTER_MODEL
               valueFrom:
                 configMapKeyRef:
                   name: flyway-config
                   key: OPENROUTER_MODEL
+            - name: GEMINI_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: flyway-config
+                  key: GEMINI_MODEL
+                  optional: true
+            - name: ACTIVE_AI_MODELS
+              valueFrom:
+                configMapKeyRef:
+                  name: flyway-config
+                  key: ACTIVE_AI_MODELS
+                  optional: true
+            - name: ENABLE_OFFLINE_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: flyway-config
+                  key: ENABLE_OFFLINE_MODE
+                  optional: true
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:

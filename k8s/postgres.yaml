@@ -17,6 +17,8 @@ metadata:
     app: postgres-db
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: postgres-db
@@ -25,6 +27,10 @@ spec:
       labels:
         app: postgres-db
     spec:
+      # securityContext fsGroup: 70 asegura permisos de escritura para el usuario postgres (UID 70 en alpine) en GCP PV
+      securityContext:
+        fsGroup: 70
+        fsGroupChangePolicy: "OnRootMismatch"
       containers:
         - name: postgres
           image: postgres:16-alpine
@@ -37,16 +43,15 @@ spec:
           ports:
             - containerPort: 5432
               name: postgres
-          # --- ASIGNACIÓN DE LOS 2GB DE MEMORIA ---
           resources:
             requests:
               cpu: 250m
-              memory: 1Gi
+              memory: 512Mi
             limits:
               cpu: 500m
               memory: 2Gi
           env:
-            # --- EVITA EL CRASHLOOPBACKOFF POR LA CARPETA LOST+FOUND ---
+            # --- Evita colisión con lost+found en volúmenes ext4 montados en cloud ---
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
             - name: POSTGRES_USER
@@ -69,16 +74,39 @@ spec:
               mountPath: /var/lib/postgresql/data
             - name: init-script
               mountPath: /docker-entrypoint-initdb.d
-          readinessProbe:
+            - name: dshm
+              mountPath: /dev/shm
+          # startupProbe: Garantiza que Kubelet NO mate a Postgres mientras initdb y init.sql están corriendo en GCP
+          startupProbe:
             exec:
-              command: ["pg_isready", "-U", "flyway", "-d", "flyway_db"]
-            initialDelaySeconds: 5
-            periodSeconds: 5
-          livenessProbe:
-            exec:
-              command: ["pg_isready", "-U", "flyway", "-d", "flyway_db"]
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -h 127.0.0.1 -p 5432 -U "${POSTGRES_USER:-flyway}" -d "${POSTGRES_DB:-flyway_db}"
             initialDelaySeconds: 15
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -h 127.0.0.1 -p 5432 -U "${POSTGRES_USER:-flyway}" -d "${POSTGRES_DB:-flyway_db}"
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - exec pg_isready -h 127.0.0.1 -p 5432 -U "${POSTGRES_USER:-flyway}" -d "${POSTGRES_DB:-flyway_db}"
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 5
       volumes:
         - name: postgres-storage
           persistentVolumeClaim:
@@ -87,6 +115,10 @@ spec:
           configMap:
             name: postgres-init-sql
             optional: true
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
 ---
 apiVersion: v1
 kind: Service

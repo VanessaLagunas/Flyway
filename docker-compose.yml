@@ -31,6 +31,7 @@ services:
       AUTH_SERVICE_URL: http://auth-service:4003
       AI_SERVICE_URL: http://ai-service:4001
       CATALOG_SERVICE_URL: http://catalog-service:4002
+      AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-210000}
     networks:
       - flyway-net
     depends_on:
@@ -72,10 +73,14 @@ services:
       PORT: 4001
       NODE_ENV: production
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-luna}
+      OPENAI_TIMEOUT_MS: ${OPENAI_TIMEOUT_MS:-180000}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+      ACTIVE_AI_MODELS: ${ACTIVE_AI_MODELS:-gemini,openai,openrouter}
+      ENABLE_OFFLINE_MODE: ${ENABLE_OFFLINE_MODE:-false}
     networks:
       - flyway-net
 
@@ -118,7 +123,8 @@ services:
       test: [ "CMD-SHELL", "pg_isready -U flyway -d flyway_db" ]
       interval: 5s
       timeout: 5s
-      retries: 5
+      start_period: 30s
+      retries: 10
     networks:
       - flyway-net
 

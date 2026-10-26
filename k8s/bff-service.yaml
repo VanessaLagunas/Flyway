@@ -49,6 +49,12 @@ spec:
                 configMapKeyRef:
                   name: flyway-config
                   key: CATALOG_SERVICE_URL
+            - name: AI_SERVICE_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: flyway-config
+                  key: AI_SERVICE_TIMEOUT_MS
+                  optional: true
           resources:
             requests:
               cpu: 50m
@@ -73,6 +79,8 @@ apiVersion: v1
 kind: Service
 metadata:
   name: bff-service
+  annotations:
+    cloud.google.com/backend-config: '{"default": "bff-backend-config"}'
 spec:
   type: ClusterIP
   ports:

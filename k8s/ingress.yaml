@@ -4,6 +4,9 @@ metadata:
   name: flyway-ingress
   annotations:
     kubernetes.io/ingress.class: "gce"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "240"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "240"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "240"
 spec:
   rules:
     - http:

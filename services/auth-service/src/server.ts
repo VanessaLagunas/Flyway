@@ -1,3 +1,4 @@
+import path from 'node:path';
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
@@ -6,6 +7,8 @@ import { Pool } from 'pg';
 import { OAuth2Client } from 'google-auth-library';
 
 dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4003;
@@ -57,9 +60,24 @@ async function checkDbConnection(): Promise<boolean> {
     await client.query('SELECT 1');
     if (!schemaMigrated) {
       await client.query(`
+        CREATE TABLE IF NOT EXISTS users (
+          id SERIAL PRIMARY KEY,
+          email VARCHAR(255) UNIQUE NOT NULL,
+          password_hash VARCHAR(255),
+          name VARCHAR(100) NOT NULL,
+          auth_provider VARCHAR(50) DEFAULT 'local',
+          avatar_url TEXT,
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         ALTER TABLE users ALTER COLUMN password_hash DROP NOT NULL;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_provider VARCHAR(50) DEFAULT 'local';
         ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+
+        INSERT INTO users (email, password_hash, name, auth_provider)
+        VALUES ('demo@flyway.cl', '${DEMO_PASSWORD_HASH}', 'Viajero Demo', 'local')
+        ON CONFLICT (email) DO UPDATE
+        SET password_hash = EXCLUDED.password_hash,
+            name = EXCLUDED.name;
       `);
       schemaMigrated = true;
     }

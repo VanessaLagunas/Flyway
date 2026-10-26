@@ -7,6 +7,9 @@ import {
   PlanRouteInput,
   OPENAI_MODEL,
   OPENROUTER_MODEL,
+  getActiveAiModels,
+  isOfflineModeEnabled,
+  getOpenAiTimeoutMs,
 } from './aiPlanner';
 import { fetchWeatherAndClothingForTrip } from './utils/weatherUtils';
 import { BudgetLevel } from './types';
@@ -21,15 +24,19 @@ app.use(express.json({ limit: '10mb' }));
 
 // Healthcheck
 app.get('/health', (_req: Request, res: Response) => {
+  const currentModel = process.env.OPENAI_MODEL || OPENAI_MODEL;
   res.json({
     status: 'ok',
     service: 'ai-service',
     port: PORT,
+    activeAiModels: getActiveAiModels(),
+    offlineModeEnabled: isOfflineModeEnabled(),
+    hasGemini: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim()),
     hasOpenAI: Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim()),
-    openAiModel: process.env.OPENAI_MODEL || OPENAI_MODEL,
+    openAiModel: currentModel,
+    openAiTimeoutMs: getOpenAiTimeoutMs(currentModel),
     hasOpenRouter: Boolean(process.env.OPENROUTER_API_KEY && process.env.OPENROUTER_API_KEY.trim()),
     openRouterModel: process.env.OPENROUTER_MODEL || OPENROUTER_MODEL,
-    offlineEngine: 'generateLocalOfflineItinerary',
     timestamp: new Date().toISOString(),
   });
 });
@@ -83,18 +90,29 @@ async function handleGenerate(req: Request, res: Response) {
     try {
       trip = await planRouteWithAI(input);
     } catch (aiErr: any) {
-      console.warn('[ai-service] Excepción no controlada en planRouteWithAI, activando generateLocalOfflineItinerary:', aiErr?.message || aiErr);
-      const liveWeather = await fetchWeatherAndClothingForTrip(input.destination, input.startDate, input.endDate);
-      trip = generateLocalOfflineItinerary(input, liveWeather);
+      if (isOfflineModeEnabled()) {
+        console.warn('[ai-service] Falló planRouteWithAI, activando generateLocalOfflineItinerary (offline habilitado):', aiErr?.message || aiErr);
+        const liveWeather = await fetchWeatherAndClothingForTrip(input.destination, input.startDate, input.endDate);
+        trip = generateLocalOfflineItinerary(input, liveWeather);
+      } else {
+        console.error('[ai-service] Falló planRouteWithAI y el modo offline está desactivado:', aiErr?.message || aiErr);
+        return res.status(502).json({
+          success: false,
+          error: aiErr?.message || 'Error al generar la ruta con los modelos de IA activos en la nube.',
+        });
+      }
     }
 
     // Garantizar el Contrato de Salida Unificado en la raíz del JSON
-    const fallbackIfMissing = (!Array.isArray(trip.days) || trip.days.length === 0)
-      ? generateLocalOfflineItinerary(input)
-      : null;
-
-    if (fallbackIfMissing) {
-      trip = fallbackIfMissing;
+    if (!Array.isArray(trip.days) || trip.days.length === 0) {
+      if (isOfflineModeEnabled()) {
+        trip = generateLocalOfflineItinerary(input);
+      } else {
+        return res.status(502).json({
+          success: false,
+          error: 'El modelo de IA no devolvió días válidos en el itinerario.',
+        });
+      }
     }
 
     const responsePayload = {
@@ -110,28 +128,35 @@ async function handleGenerate(req: Request, res: Response) {
       currency: 'CLP' as const,
       totalEstimatedCostCLP: Number(trip.totalEstimatedCostCLP ?? trip.totalCost) || 50000,
       days: trip.days,
-      sourceEngine: trip.sourceEngine || 'offline_local',
+      sourceEngine: trip.sourceEngine || 'cloud_ai',
       trip,
     };
 
     return res.status(200).json(responsePayload);
   } catch (error: any) {
-    console.warn('[ai-service] Error crítico en handleGenerate, respondiendo con Motor Local Offline:', error?.message || error);
-    const { destination, startDate, endDate, budget, interests } = req.body || {};
-    const fallbackInput: PlanRouteInput = {
-      destination: (typeof destination === 'string' && destination.trim()) ? destination.trim() : 'Santiago',
-      startDate: startDate || new Date().toISOString().split('T')[0],
-      endDate: endDate || new Date().toISOString().split('T')[0],
-      budget: (budget as BudgetLevel) || 'standard',
-      interests: Array.isArray(interests) ? interests : [],
-    };
-    const safeTrip = generateLocalOfflineItinerary(fallbackInput);
-    return res.status(200).json({
-      success: true,
-      ...safeTrip,
-      currency: 'CLP',
-      sourceEngine: 'offline_local',
-      trip: safeTrip,
+    console.error('[ai-service] Error crítico en handleGenerate:', error?.message || error);
+    if (isOfflineModeEnabled()) {
+      const { destination, startDate, endDate, budget, interests } = req.body || {};
+      const fallbackInput: PlanRouteInput = {
+        destination: (typeof destination === 'string' && destination.trim()) ? destination.trim() : 'Santiago',
+        startDate: startDate || new Date().toISOString().split('T')[0],
+        endDate: endDate || new Date().toISOString().split('T')[0],
+        budget: (budget as BudgetLevel) || 'standard',
+        interests: Array.isArray(interests) ? interests : [],
+      };
+      const safeTrip = generateLocalOfflineItinerary(fallbackInput);
+      return res.status(200).json({
+        success: true,
+        ...safeTrip,
+        currency: 'CLP',
+        sourceEngine: 'offline_local',
+        trip: safeTrip,
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      error: error?.message || 'Error interno en el servicio de IA.',
     });
   }
 }
@@ -141,8 +166,13 @@ app.post('/plan-route', handleGenerate);
 
 export { app };
 
-if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, '0.0.0.0', () => {
+if (process.env.NODE_ENV !== 'test' && !process.argv.some(arg => arg.includes('test'))) {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🧠 AI Service corriendo en http://0.0.0.0:${PORT}`);
   });
+  const openAiTimeout = getOpenAiTimeoutMs();
+  server.setTimeout(openAiTimeout + 30000);
+  if ('requestTimeout' in server) {
+    (server as any).requestTimeout = openAiTimeout + 30000;
+  }
 }

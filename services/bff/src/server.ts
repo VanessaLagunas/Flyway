@@ -1,8 +1,11 @@
+import path from 'node:path';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
 dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
+dotenv.config({ path: path.resolve(process.cwd(), '.env') });
 
 const app = express();
 const PORT = Number(process.env.PORT) || 4000;
@@ -25,6 +28,14 @@ interface AuthenticatedRequest extends Request {
 }
 
 // Helper para llamadas con timeout usando fetch nativo de Node.js 20
+// Garantiza un margen superior a OPENAI_TIMEOUT_MS para evitar abortos prematuros mientras ai-service genera con gpt-6-luna
+const envBffTimeout = Number(process.env.AI_SERVICE_TIMEOUT_MS);
+const envOpenAiTimeout = Number(process.env.OPENAI_TIMEOUT_MS);
+const baseTimeout = Number.isFinite(envBffTimeout) && envBffTimeout > 0 ? envBffTimeout : 210000;
+export const AI_SERVICE_TIMEOUT_MS = Number.isFinite(envOpenAiTimeout) && envOpenAiTimeout > 0
+  ? Math.max(baseTimeout, envOpenAiTimeout + 30000)
+  : baseTimeout;
+
 async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 25000): Promise<globalThis.Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
@@ -244,7 +255,7 @@ async function handleGenerateItinerary(req: Request, res: Response) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       },
-      90000
+      AI_SERVICE_TIMEOUT_MS
     );
 
     const aiData = (await aiRes.json()) as any;
@@ -525,8 +536,12 @@ app.post('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Re
 
 export { app };
 
-if (process.env.NODE_ENV !== 'test') {
-  app.listen(PORT, '0.0.0.0', () => {
+if (process.env.NODE_ENV !== 'test' && !process.argv.some(arg => arg.includes('test'))) {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🌐 Flyway API Gateway (BFF) corriendo en http://0.0.0.0:${PORT}`);
   });
+  server.setTimeout(AI_SERVICE_TIMEOUT_MS + 30000);
+  if ('requestTimeout' in server) {
+    (server as any).requestTimeout = AI_SERVICE_TIMEOUT_MS + 30000;
+  }
 }
