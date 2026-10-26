@@ -238,21 +238,39 @@ async function handleGenerateItinerary(req: Request, res: Response) {
       return res.status(400).json({ error: 'El parámetro destination es obligatorio y debe ser texto.' });
     }
 
-    const payload = {
+    const payload: any = {
       destination: destination.trim(),
       startDate: startDate || new Date().toISOString().split('T')[0],
       endDate: endDate || new Date().toISOString().split('T')[0],
       budget: budget || 'standard',
       interests: Array.isArray(interests) ? interests : [],
     };
+    if (req.body?.offline !== undefined) {
+      payload.offline = req.body.offline;
+    }
+    if (req.body?.enableOfflineMode !== undefined) {
+      payload.enableOfflineMode = req.body.enableOfflineMode;
+    }
 
-    console.log(`[BFF] Enrutando generación hacia ai-service (${AI_SERVICE_URL}/generate) para "${payload.destination}"`);
+    const targetAiServiceUrl = process.env.AI_SERVICE_URL || AI_SERVICE_URL;
+    console.log(`[BFF] Enrutando generación hacia ai-service (${targetAiServiceUrl}/generate) para "${payload.destination}"`);
+
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (req.headers['x-offline-mode']) {
+      headers['x-offline-mode'] = String(req.headers['x-offline-mode']);
+    }
+    if (req.headers['x-allow-offline']) {
+      headers['x-allow-offline'] = String(req.headers['x-allow-offline']);
+    }
+    if (!headers['x-offline-mode'] && (process.env.ENABLE_OFFLINE_MODE === 'true' || process.env.ENABLE_OFFLINE_MODE === '1')) {
+      headers['x-offline-mode'] = 'true';
+    }
 
     const aiRes = await fetchWithTimeout(
-      `${AI_SERVICE_URL}/generate`,
+      `${targetAiServiceUrl}/generate`,
       {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       },
       AI_SERVICE_TIMEOUT_MS

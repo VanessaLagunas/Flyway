@@ -62,6 +62,30 @@ app.get('/weather', async (req: Request, res: Response) => {
   }
 });
 
+export function extractOfflineOverride(req: Request): boolean | undefined {
+  const candidates = [
+    req.headers['x-offline-mode'],
+    req.headers['x-allow-offline'],
+    req.body?.offline,
+    req.body?.enableOfflineMode,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'boolean') return candidate;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim().toLowerCase();
+      if (trimmed === 'true' || trimmed === '1' || trimmed === 'yes') return true;
+      if (trimmed === 'false' || trimmed === '0' || trimmed === 'no') return false;
+    }
+    if (typeof candidate === 'number') {
+      if (candidate === 1) return true;
+      if (candidate === 0) return false;
+    }
+  }
+
+  return undefined;
+}
+
 // Endpoint para generar itinerario con Cascada de Resiliencia (OpenAI -> OpenRouter -> Offline Local CLP)
 async function handleGenerate(req: Request, res: Response) {
   try {
@@ -86,11 +110,14 @@ async function handleGenerate(req: Request, res: Response) {
 
     console.log(`[ai-service] Generando itinerario para "${input.destination}" (${input.startDate} a ${input.endDate})`);
 
+    const requestAllowsOffline = extractOfflineOverride(req);
+    const offlineAllowed = isOfflineModeEnabled(requestAllowsOffline);
+
     let trip;
     try {
-      trip = await planRouteWithAI(input);
+      trip = await planRouteWithAI(input, offlineAllowed);
     } catch (aiErr: any) {
-      if (isOfflineModeEnabled()) {
+      if (offlineAllowed) {
         console.warn('[ai-service] Falló planRouteWithAI, activando generateLocalOfflineItinerary (offline habilitado):', aiErr?.message || aiErr);
         const liveWeather = await fetchWeatherAndClothingForTrip(input.destination, input.startDate, input.endDate);
         trip = generateLocalOfflineItinerary(input, liveWeather);
@@ -105,7 +132,7 @@ async function handleGenerate(req: Request, res: Response) {
 
     // Garantizar el Contrato de Salida Unificado en la raíz del JSON
     if (!Array.isArray(trip.days) || trip.days.length === 0) {
-      if (isOfflineModeEnabled()) {
+      if (offlineAllowed) {
         trip = generateLocalOfflineItinerary(input);
       } else {
         return res.status(502).json({
@@ -135,7 +162,9 @@ async function handleGenerate(req: Request, res: Response) {
     return res.status(200).json(responsePayload);
   } catch (error: any) {
     console.error('[ai-service] Error crítico en handleGenerate:', error?.message || error);
-    if (isOfflineModeEnabled()) {
+    const requestAllowsOffline = extractOfflineOverride(req);
+    const offlineAllowed = isOfflineModeEnabled(requestAllowsOffline);
+    if (offlineAllowed) {
       const { destination, startDate, endDate, budget, interests } = req.body || {};
       const fallbackInput: PlanRouteInput = {
         destination: (typeof destination === 'string' && destination.trim()) ? destination.trim() : 'Santiago',

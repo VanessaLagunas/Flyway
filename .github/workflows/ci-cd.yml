@@ -75,11 +75,15 @@ jobs:
     name: 2. Docker Compose & Bruno CLI Tests
     runs-on: ubuntu-latest
     needs: lint
+    env:
+      ENABLE_OFFLINE_MODE: 'true'
     steps:
       - name: Checkout del repositorio
         uses: actions/checkout@v4
 
       - name: Levantar los 6 contenedores con Docker Compose
+        env:
+          ENABLE_OFFLINE_MODE: 'true'
         run: |
           docker compose up -d --build
 

@@ -1,5 +1,6 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { app, extractOfflineOverride } from './server';
 import {
   getActiveAiModels,
   isOfflineModeEnabled,
@@ -100,6 +101,32 @@ describe('AI Planner Requirements Verification', () => {
 
       const trip = await planRouteWithAI(input);
       assert.ok(trip);
+      assert.equal(trip.sourceEngine, 'offline_local');
+      assert.ok(trip.days.length >= 2);
+    });
+
+    it('respects explicit override in isOfflineModeEnabled regardless of env var', () => {
+      process.env.ENABLE_OFFLINE_MODE = 'false';
+      assert.equal(isOfflineModeEnabled(true), true);
+
+      process.env.ENABLE_OFFLINE_MODE = 'true';
+      assert.equal(isOfflineModeEnabled(false), false);
+    });
+
+    it('allows planRouteWithAI to use offline engine when allowOffline parameter is true even if env var is false', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'false';
+      process.env.ACTIVE_AI_MODELS = 'unknown_model';
+      const input: PlanRouteInput = {
+        destination: 'Valparaíso',
+        startDate: '2026-11-01',
+        endDate: '2026-11-03',
+        budget: 'standard',
+        interests: ['cultura', 'gastronomia'],
+      };
+
+      const trip = await planRouteWithAI(input, true);
+      assert.ok(trip);
+      assert.equal(trip.currency, 'CLP');
       assert.equal(trip.sourceEngine, 'offline_local');
       assert.ok(trip.days.length >= 2);
     });
@@ -463,5 +490,212 @@ describe('AI Planner Requirements Verification', () => {
     process.env.OPENAI_TIMEOUT_MS = originalOpenAiTimeout;
     process.env.GEMINI_TIMEOUT_MS = originalGeminiTimeout;
     process.env.OPENROUTER_TIMEOUT_MS = originalOpenRouterTimeout;
+  });
+
+  describe('HTTP /generate Endpoint & Offline Mode Resilience', () => {
+    let server: any;
+    let baseUrl: string;
+    const origOffline = process.env.ENABLE_OFFLINE_MODE;
+    const origGemini = process.env.GEMINI_API_KEY;
+    const origOpenai = process.env.OPENAI_API_KEY;
+    const origOpenRouter = process.env.OPENROUTER_API_KEY;
+
+    before(async () => {
+      await new Promise<void>((resolve) => {
+        server = app.listen(0, '127.0.0.1', () => {
+          const addr = server.address() as any;
+          baseUrl = `http://127.0.0.1:${addr.port}`;
+          resolve();
+        });
+      });
+    });
+
+    after(async () => {
+      process.env.ENABLE_OFFLINE_MODE = origOffline;
+      if (origGemini !== undefined) process.env.GEMINI_API_KEY = origGemini;
+      if (origOpenai !== undefined) process.env.OPENAI_API_KEY = origOpenai;
+      if (origOpenRouter !== undefined) process.env.OPENROUTER_API_KEY = origOpenRouter;
+      await new Promise<void>((resolve) => {
+        server.close(() => resolve());
+      });
+    });
+
+    it('returns 200 OK with CLP currency when ENABLE_OFFLINE_MODE is true (Bruno test 04 contract)', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'true';
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      const res = await fetch(`${baseUrl}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: 'Valparaíso',
+          startDate: '2026-11-01',
+          endDate: '2026-11-03',
+          budget: 'standard',
+          interests: ['cultura', 'gastronomia'],
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json() as any;
+      assert.equal(data.currency, 'CLP');
+      assert.ok(Array.isArray(data.days));
+      assert.ok(data.days.length > 0);
+    });
+
+    it('returns 502 Bad Gateway when ENABLE_OFFLINE_MODE is false and no keys available (GCP Cloud Contract)', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'false';
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      const res = await fetch(`${baseUrl}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: 'Valparaíso',
+          startDate: '2026-11-01',
+          endDate: '2026-11-03',
+          budget: 'standard',
+          interests: ['cultura', 'gastronomia'],
+        }),
+      });
+
+      assert.equal(res.status, 502);
+      const data = await res.json() as any;
+      assert.equal(data.success, false);
+      assert.match(data.error, /modo offline se encuentra desactivado/i);
+    });
+
+    it('returns 200 OK when offline is explicitly requested in body even if ENABLE_OFFLINE_MODE is false', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'false';
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      const res = await fetch(`${baseUrl}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: 'Valparaíso',
+          startDate: '2026-11-01',
+          endDate: '2026-11-03',
+          budget: 'standard',
+          interests: ['cultura', 'gastronomia'],
+          offline: true,
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json() as any;
+      assert.equal(data.currency, 'CLP');
+      assert.ok(Array.isArray(data.days));
+      assert.ok(data.days.length > 0);
+    });
+
+    it('returns 200 OK when x-offline-mode header is set even if ENABLE_OFFLINE_MODE is false', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'false';
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      const res = await fetch(`${baseUrl}/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-offline-mode': 'true',
+        },
+        body: JSON.stringify({
+          destination: 'Valparaíso',
+          startDate: '2026-11-01',
+          endDate: '2026-11-03',
+          budget: 'standard',
+          interests: ['cultura', 'gastronomia'],
+        }),
+      });
+
+      assert.equal(res.status, 200);
+      const data = await res.json() as any;
+      assert.equal(data.currency, 'CLP');
+      assert.ok(Array.isArray(data.days));
+      assert.ok(data.days.length > 0);
+    });
+
+    it('returns 502 Bad Gateway when x-offline-mode is explicitly "false" even if ENABLE_OFFLINE_MODE is true', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'true';
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      const res = await fetch(`${baseUrl}/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-offline-mode': 'false',
+        },
+        body: JSON.stringify({
+          destination: 'Valparaíso',
+          startDate: '2026-11-01',
+          endDate: '2026-11-03',
+          budget: 'standard',
+          interests: ['cultura', 'gastronomia'],
+        }),
+      });
+
+      assert.equal(res.status, 502);
+      const data = await res.json() as any;
+      assert.equal(data.success, false);
+      assert.match(data.error, /modo offline se encuentra desactivado/i);
+    });
+
+    it('returns 502 Bad Gateway when offline: false is explicitly in body even if ENABLE_OFFLINE_MODE is true', async () => {
+      process.env.ENABLE_OFFLINE_MODE = 'true';
+      delete process.env.GEMINI_API_KEY;
+      delete process.env.OPENAI_API_KEY;
+      delete process.env.OPENROUTER_API_KEY;
+
+      const res = await fetch(`${baseUrl}/generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          destination: 'Valparaíso',
+          startDate: '2026-11-01',
+          endDate: '2026-11-03',
+          budget: 'standard',
+          interests: ['cultura', 'gastronomia'],
+          offline: false,
+        }),
+      });
+
+      assert.equal(res.status, 502);
+      const data = await res.json() as any;
+      assert.equal(data.success, false);
+      assert.match(data.error, /modo offline se encuentra desactivado/i);
+    });
+
+    it('extractOfflineOverride parses various boolean, string, and numeric representations correctly', () => {
+      const mockReq1: any = { headers: { 'x-offline-mode': 'true' }, body: {} };
+      assert.equal(extractOfflineOverride(mockReq1), true);
+
+      const mockReq2: any = { headers: { 'x-offline-mode': 'false' }, body: {} };
+      assert.equal(extractOfflineOverride(mockReq2), false);
+
+      const mockReq3: any = { headers: {}, body: { offline: true } };
+      assert.equal(extractOfflineOverride(mockReq3), true);
+
+      const mockReq4: any = { headers: {}, body: { offline: false } };
+      assert.equal(extractOfflineOverride(mockReq4), false);
+
+      const mockReq5: any = { headers: {}, body: { enableOfflineMode: 1 } };
+      assert.equal(extractOfflineOverride(mockReq5), true);
+
+      const mockReq6: any = { headers: {}, body: { enableOfflineMode: 0 } };
+      assert.equal(extractOfflineOverride(mockReq6), false);
+
+      const mockReq7: any = { headers: {}, body: {} };
+      assert.equal(extractOfflineOverride(mockReq7), undefined);
+    });
   });
 });

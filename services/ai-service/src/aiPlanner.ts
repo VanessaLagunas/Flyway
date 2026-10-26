@@ -1215,8 +1215,12 @@ export function getActiveAiModels(): string[] {
 /**
  * Determina si el modo offline está explícitamente activado.
  * Por defecto es false (en la nube de GCP no se utiliza modo offline según requerimiento).
+ * Permite un override booleano explícito cuando se requiera evaluar por petición.
  */
-export function isOfflineModeEnabled(): boolean {
+export function isOfflineModeEnabled(explicitOverride?: boolean): boolean {
+  if (typeof explicitOverride === 'boolean') {
+    return explicitOverride;
+  }
   const envVal = (process.env.ENABLE_OFFLINE_MODE || process.env.ENABLE_OFFLINE_FALLBACK || 'false').trim().toLowerCase();
   return envVal === 'true' || envVal === '1' || envVal === 'yes';
 }
@@ -1228,9 +1232,9 @@ export function isOfflineModeEnabled(): boolean {
  *     * 'gemini': Google Gemini API
  *     * 'openai': OpenAI API
  *     * 'openrouter': OpenRouter API
- * - En la nube de GCP el modo offline está desactivado por defecto (salvo ENABLE_OFFLINE_MODE=true).
+ * - En la nube de GCP el modo offline está desactivado por defecto (salvo ENABLE_OFFLINE_MODE=true o allowOffline=true).
  */
-export async function planRouteWithAI(input: PlanRouteInput): Promise<Trip> {
+export async function planRouteWithAI(input: PlanRouteInput, allowOffline: boolean = isOfflineModeEnabled()): Promise<Trip> {
   const daysCount = getDaysCount(input.startDate, input.endDate);
   const isChile = isChileanLocation(input.destination);
 
@@ -1350,7 +1354,7 @@ export async function planRouteWithAI(input: PlanRouteInput): Promise<Trip> {
 
   // Si ningún modelo de IA activo generó la ruta
   const liveWeather = await weatherPromise;
-  if (isOfflineModeEnabled()) {
+  if (allowOffline) {
     console.warn(
       `[ai-service] Modo offline explícitamente habilitado: ejecutando Motor Local Offline (generateLocalOfflineItinerary).`
     );
