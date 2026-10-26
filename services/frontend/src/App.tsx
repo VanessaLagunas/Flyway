@@ -11,7 +11,7 @@ import { SavedTripsScreen } from './screens/SavedTripsScreen';
 import { LoginScreen, AuthUser } from './screens/LoginScreen';
 import { generateSmartTrip } from './utils/tripGenerator';
 import { ensureTripHasPexelsPhotos } from './utils/photoUtils';
-import { getBffUrl } from './utils/apiUrl';
+import { getBffUrl, parseJsonSafe } from './utils/apiUrl';
 import {
   getWeatherAndClothingForTrip,
   fetchWeatherAndClothingForTrip,
@@ -81,7 +81,7 @@ export default function App() {
           setUserEmail(null);
           return null;
         }
-        return res.json();
+        return parseJsonSafe(res);
       })
       .then((data) => {
         if (data?.user?.email) {
@@ -112,7 +112,7 @@ export default function App() {
       method: 'GET',
       headers,
     })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => (res.ok ? parseJsonSafe(res) : null))
       .then((data) => {
         if (data && Array.isArray(data.saved) && data.saved.length > 0) {
           const remoteTrips: Trip[] = data.saved
@@ -202,7 +202,7 @@ export default function App() {
       clearTimeout(subTimer5);
       clearTimeout(subTimer6);
 
-      const result = await response.json();
+      const result = await parseJsonSafe(response);
 
       if (!response.ok) {
         throw new Error(result.error || result.detail || `Error en el servicio de IA (HTTP ${response.status})`);

@@ -5,7 +5,7 @@ services:
       context: ./services/frontend
       dockerfile: Dockerfile
       args:
-        VITE_BFF_URL: http://localhost:4000/api/v1
+        VITE_BFF_URL: ${VITE_BFF_URL:-/api/v1}
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     container_name: flyway-frontend
     restart: unless-stopped

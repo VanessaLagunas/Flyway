@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ODCInput } from '../odc-components/ODCInput';
 import { ODCButton } from '../odc-components/ODCButton';
-import { getBffUrl } from '../utils/apiUrl';
+import { getBffUrl, parseJsonSafe } from '../utils/apiUrl';
 
 export interface AuthUser {
   id: number;
@@ -79,7 +79,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
       if (!res.ok || !data.token) {
         setError(data.error || 'No se pudo iniciar sesión con Google.');
         return;
@@ -182,7 +182,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const data = await parseJsonSafe(res);
 
       if (!res.ok || !data.token) {
         setError(data.error || 'Credenciales inválidas. Intenta con Acceso Rápido Demo.');
