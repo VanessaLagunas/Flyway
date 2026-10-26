@@ -11,6 +11,7 @@ import { SavedTripsScreen } from './screens/SavedTripsScreen';
 import { LoginScreen, AuthUser } from './screens/LoginScreen';
 import { generateSmartTrip } from './utils/tripGenerator';
 import { ensureTripHasPexelsPhotos } from './utils/photoUtils';
+import { getBffUrl } from './utils/apiUrl';
 import {
   getWeatherAndClothingForTrip,
   fetchWeatherAndClothingForTrip,
@@ -57,7 +58,7 @@ export default function App() {
     return null;
   });
 
-  const bffUrl = (import.meta.env.VITE_BFF_URL as string) || 'http://localhost:4000/api/v1';
+  const bffUrl = getBffUrl();
 
   // Verificar validez del token JWT en el servidor al cargar la aplicación
   useEffect(() => {

@@ -18,6 +18,13 @@ spec:
                 name: bff-service
                 port:
                   number: 4000
+          - path: /api
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: bff-service
+                port:
+                  number: 4000
           - path: /*
             pathType: ImplementationSpecific
             backend:

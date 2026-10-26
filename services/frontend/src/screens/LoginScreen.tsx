@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ODCInput } from '../odc-components/ODCInput';
 import { ODCButton } from '../odc-components/ODCButton';
+import { getBffUrl } from '../utils/apiUrl';
 
 export interface AuthUser {
   id: number;
@@ -60,7 +61,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   const googleBtnContainerRef = useRef<HTMLDivElement>(null);
 
-  const bffUrl = (import.meta.env.VITE_BFF_URL as string) || 'http://localhost:4000/api/v1';
+  const bffUrl = getBffUrl();
   const googleClientId = ((import.meta.env.VITE_GOOGLE_CLIENT_ID as string) || '').trim();
 
   const completeGoogleLogin = async (payload: {

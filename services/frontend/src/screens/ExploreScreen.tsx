@@ -9,6 +9,7 @@ import { ODCButton } from '../odc-components/ODCButton';
 import { ODCDateRangePicker, getTodayISO, addDaysISO } from '../odc-components/ODCDateRangePicker';
 import { getPexelsPhotoForDestination } from '../utils/photoUtils';
 import { getWeatherAndClothingForTrip, getBudgetTierInfo } from '../utils/weatherUtils';
+import { getBffUrl } from '../utils/apiUrl';
 import { MapPin, Globe, Camera, Building2, Compass, Wallet } from 'lucide-react';
 
 export interface ExploreScreenProps {
@@ -138,7 +139,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
     if (!currentDest && destination.trim().length >= 3) {
       const timer = setTimeout(async () => {
         try {
-          const bffUrl = (import.meta.env.VITE_BFF_URL as string) || 'http://localhost:4000/api/v1';
+          const bffUrl = getBffUrl();
           const res = await fetch(`${bffUrl}/photos?query=${encodeURIComponent(destination.trim())}&count=1`);
           if (res.ok) {
             const data = await res.json();
