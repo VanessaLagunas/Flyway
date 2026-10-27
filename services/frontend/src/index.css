@@ -22,6 +22,8 @@
   --border-radius-rounded: 999px;
 
   /* Flyway tokens */
+  --fw-primary: #366447;
+  --fw-primary-hover: #264D33;
   --fw-primary-soft: #E1F2E2;
   --fw-chip-active: #80AB8D;
   --fw-sand: #E0D4BC;
@@ -922,6 +924,124 @@ h3 { font-size: 18px; font-weight: 600; }
   font-size: 32px;
   text-align: center;
   margin-bottom: 8px;
+}
+
+.fw-login .fw-card {
+  background: #FFFFFF;
+  border: 1px solid #DFD7C7;
+  color: #1E1F19;
+}
+
+.fw-login .fw-label {
+  color: #262820;
+  font-weight: 700;
+}
+
+.fw-auth-switcher {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  background: #EBE4D6;
+  border: 1px solid #D5CBB7;
+  border-radius: 999px;
+  padding: 5px;
+  margin-bottom: 18px;
+}
+
+.fw-auth-tab {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+  line-height: 1.25;
+  text-align: center;
+  cursor: pointer;
+  background: transparent;
+  color: #1E1F19;
+  transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.fw-auth-tab:hover:not(.is-active) {
+  background: #FAF8F4;
+  color: #264D33;
+}
+
+.fw-auth-tab.is-active {
+  background: #264D33;
+  border-color: #1D3D27;
+  color: #FFFFFF;
+  box-shadow: 0 2px 8px rgba(30, 31, 25, 0.2);
+}
+
+.fw-auth-tab:focus-visible {
+  outline: 2px solid #264D33;
+  outline-offset: 2px;
+}
+
+.fw-google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 10px 16px;
+  border-radius: 14px;
+  background: #FFFFFF;
+  color: #1E1F19;
+  font-weight: 700;
+  font-size: 14px;
+  font-family: inherit;
+  border: 1.5px solid #CBD5E1;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.fw-google-btn:hover:not(:disabled) {
+  background: #F8FAFC;
+  border-color: #94A3B8;
+}
+
+.fw-google-btn:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.fw-login .btn-primary,
+.fw-login .fw-btn-primary {
+  background: #264D33;
+  border-color: #264D33;
+  color: #FFFFFF;
+}
+
+.fw-login .btn-primary:hover:not([disabled]),
+.fw-login .fw-btn-primary:hover:not([disabled]) {
+  background: #1D3D27;
+  border-color: #1D3D27;
+  color: #FFFFFF;
+}
+
+.fw-login .btn-primary[disabled],
+.fw-login .fw-btn-primary[disabled] {
+  background: #5E7D68;
+  border-color: #5E7D68;
+  color: #FFFFFF;
+  opacity: 1;
+}
+
+.fw-login .fw-btn-ghost {
+  color: #264D33;
+  font-weight: 700;
+}
+
+.fw-login .fw-btn-ghost:hover:not(:disabled) {
+  color: #1D3D27;
+  background: rgba(38, 77, 51, 0.06);
+  border-radius: 12px;
 }
 
 /* Tabs de OutSystems UI */

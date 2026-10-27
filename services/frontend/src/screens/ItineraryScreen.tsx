@@ -26,6 +26,7 @@ import {
   BUDGET_TIER_DETAILS,
 } from '../utils/weatherUtils';
 import { generateSmartTrip } from '../utils/tripGenerator';
+import { SAVE_AUTH_REQUIRED_MESSAGE } from '../utils/authGuard';
 import {
   BookOpen,
   Landmark,
@@ -46,6 +47,10 @@ export interface ItineraryScreenProps {
   onSaveTrip: (trip: Trip) => void;
   isSaved: boolean;
   onUpdateTrip: (updatedTrip: Trip) => void;
+  isAuthenticated?: boolean;
+  saveAuthMessage?: string | null;
+  onDismissSaveAuthMessage?: () => void;
+  onRequestLogin?: () => void;
 }
 
 type TabType = 'itinerary' | 'costs';
@@ -56,6 +61,10 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
   onSaveTrip,
   isSaved,
   onUpdateTrip,
+  isAuthenticated = false,
+  saveAuthMessage = null,
+  onDismissSaveAuthMessage,
+  onRequestLogin,
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('itinerary');
   const [activeDay, setActiveDay] = useState<number>(1);
@@ -70,6 +79,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
   const [replaceActivity, setReplaceActivity] = useState<Activity | null>(null);
   const [deleteConfirmActivity, setDeleteConfirmActivity] = useState<Activity | null>(null);
   const [isAdjustRouteOpen, setIsAdjustRouteOpen] = useState(false);
+  const [localSaveAuthPrompt, setLocalSaveAuthPrompt] = useState<string | null>(null);
 
   // Time adjust inputs
   const [startTime, setStartTime] = useState('');
@@ -100,11 +110,36 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
     setReplaceActivity(null);
     setDeleteConfirmActivity(null);
     setIsAdjustRouteOpen(false);
+    setLocalSaveAuthPrompt(null);
     setAdjDest(trip.destination);
     setAdjStart(trip.startDate);
     setAdjEnd(trip.endDate);
     setAdjBudget(trip.budgetLevel);
   }, [trip.id, trip.destination, trip.imageUrl]);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      setLocalSaveAuthPrompt(null);
+    }
+  }, [isAuthenticated]);
+
+  const activeSaveAuthMessage = saveAuthMessage || localSaveAuthPrompt;
+
+  const dismissSaveAuthModal = () => {
+    setLocalSaveAuthPrompt(null);
+    if (onDismissSaveAuthMessage) {
+      onDismissSaveAuthMessage();
+    }
+  };
+
+  const handleSaveButtonClick = () => {
+    if (!isAuthenticated) {
+      setLocalSaveAuthPrompt(SAVE_AUTH_REQUIRED_MESSAGE);
+      onSaveTrip(trip);
+      return;
+    }
+    onSaveTrip(trip);
+  };
 
   // Datos enriquecidos de clima, estación, vestimenta y presupuesto para el viaje actual
   const computedWeather = getWeatherAndClothingForTrip(
@@ -753,9 +788,9 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
           variant="primary"
           fullWidth
           id="btn-save-trip-cta"
-          onClick={() => onSaveTrip(trip)}
+          onClick={handleSaveButtonClick}
         >
-          {isSaved ? '♥ Ruta Guardada en Mis Rutas' : 'Guardar Ruta'}
+          {isAuthenticated && isSaved ? '♥ Ruta Guardada en Mis Rutas' : 'Guardar Ruta'}
         </ODCButton>
       </div>
 
@@ -1398,6 +1433,49 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
             Cancelar
           </button>
         </div>
+      </ODCBottomSheet>
+
+      {/* Hoja 7: Aviso de inicio de sesión obligatorio al intentar guardar ruta */}
+      <ODCBottomSheet
+        isOpen={Boolean(activeSaveAuthMessage)}
+        onClose={dismissSaveAuthModal}
+        id="sheet-save-auth-required"
+      >
+        {activeSaveAuthMessage && (
+          <div role="alert" id="save-auth-required-alert">
+            <div className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-[#264D33] bg-[#E1F2E2] px-3 py-1 rounded-full border border-[#C6E4C8] mb-2">
+              <span>🔒</span>
+              <span>Inicio de sesión requerido</span>
+            </div>
+            <h2 className="text-2xl font-bold mb-1.5 text-[#1E1F19]">
+              Inicia sesión para guardar la ruta
+            </h2>
+            <p className="text-sm text-[#1E1F19] mb-5 leading-relaxed">
+              {activeSaveAuthMessage}
+            </p>
+            {onRequestLogin && (
+              <ODCButton
+                variant="primary"
+                fullWidth
+                id="btn-save-go-to-login"
+                onClick={() => {
+                  dismissSaveAuthModal();
+                  onRequestLogin();
+                }}
+              >
+                Iniciar sesión o crear cuenta
+              </ODCButton>
+            )}
+            <button
+              type="button"
+              id="btn-save-auth-dismiss"
+              className="btn fw-btn-ghost w-full mt-2"
+              onClick={dismissSaveAuthModal}
+            >
+              Seguir viendo sin guardar
+            </button>
+          </div>
+        )}
       </ODCBottomSheet>
     </div>
   );

@@ -33,30 +33,42 @@ export const SavedTripsScreen: React.FC<SavedTripsScreenProps> = ({
   return (
     <div className="fw-page" id="saved-trips-page">
       <h1 className="m-0 mb-1 text-3xl font-bold">Mis Rutas Guardadas</h1>
-      {savedTrips.length > 0 && (
+      {userEmail && savedTrips.length > 0 && (
         <p className="fw-muted text-base mb-4">
           Tus próximas aventuras, listas cuando las necesites.
         </p>
       )}
 
-      {!userEmail && (
-        <div className="mb-5 p-3 rounded-xl bg-[#E1F2E2]/60 border border-[#C6E4C8] flex items-center justify-between gap-3 text-xs">
-          <span className="text-[#264D33] font-medium">
-            💡 Inicia sesión para sincronizar tus rutas guardadas en la base de datos de la nube.
-          </span>
+      {!userEmail ? (
+        <div className="fw-empty" id="saved-trips-auth-required">
+          <div className="fw-empty__icon" aria-hidden="true">
+            🔒
+          </div>
+          <h2 className="text-2xl font-bold mb-2">Inicia sesión para guardar rutas</h2>
+          <p className="fw-muted text-base mb-6 max-w-md mx-auto">
+            El guardado de itinerarios o rutas solo está disponible para usuarios que hayan iniciado sesión previamente.
+          </p>
           {onOpenLogin && (
+            <ODCButton
+              variant="primary"
+              onClick={onOpenLogin}
+              id="btn-saved-login-cta"
+            >
+              Iniciar sesión
+            </ODCButton>
+          )}
+          <div className="mt-3">
             <button
               type="button"
-              onClick={onOpenLogin}
-              className="text-[#264D33] font-bold hover:underline shrink-0 cursor-pointer"
+              className="btn fw-btn-ghost text-sm"
+              onClick={onGoToExplore}
+              id="btn-saved-explore-fallback"
             >
-              Iniciar sesión →
+              Explorar destinos sin guardar
             </button>
-          )}
+          </div>
         </div>
-      )}
-
-      {savedTrips.length === 0 ? (
+      ) : savedTrips.length === 0 ? (
         <div className="fw-empty">
           <div className="fw-empty__icon" aria-hidden="true">
             ♡

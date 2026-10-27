@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview --port 3000",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "npx tsx --test src/utils/apiUrl.test.ts src/utils/mapUtils.test.ts src/utils/photoUtils.test.ts src/utils/authGuard.test.tsx"
   },
   "dependencies": {
     "lucide-react": "^0.546.0",
@@ -24,6 +25,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"
   }

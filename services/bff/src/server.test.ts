@@ -364,4 +364,160 @@ describe('BFF Itinerary Generation, Photo Enrichment, Photos Proxy & Auth Config
       await new Promise<void>((resolve) => mockCatalogServer.close(() => resolve()));
     }
   });
+
+  it('enforces authentication on GET and POST /api/v1/saved and returns clear Spanish sign-in message', async () => {
+    const origAuthUrl = process.env.AUTH_SERVICE_URL;
+    const origCatalogUrl = process.env.CATALOG_SERVICE_URL;
+
+    let authMeCalls = 0;
+    let catalogSaveCalls = 0;
+    let lastSavedPayload: any = null;
+    let lastGetSavedPath = '';
+
+    const mockAuthServer = http.createServer((req, res) => {
+      if (req.url === '/me' && req.method === 'GET') {
+        authMeCalls++;
+        const auth = req.headers.authorization || '';
+        if (auth === 'Bearer valid-jwt-user-42') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              valid: true,
+              user: { id: 42, email: 'viajero@flyway.cl', name: 'Viajero' },
+            })
+          );
+          return;
+        }
+        if (auth === 'Bearer malformed-user-payload') {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ valid: true, user: { id: 0, email: '' } }));
+          return;
+        }
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Token inválido o expirado.' }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    const mockCatalogServer = http.createServer((req, res) => {
+      if (req.url === '/saved' && req.method === 'POST') {
+        catalogSaveCalls++;
+        let body = '';
+        req.on('data', (c) => { body += c; });
+        req.on('end', () => {
+          lastSavedPayload = JSON.parse(body);
+          res.writeHead(201, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, saved: lastSavedPayload }));
+        });
+        return;
+      }
+      if (req.url?.startsWith('/saved/') && req.method === 'GET') {
+        lastGetSavedPath = req.url;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, count: 0, saved: [] }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => mockAuthServer.listen(0, '127.0.0.1', () => resolve()));
+    await new Promise<void>((resolve) => mockCatalogServer.listen(0, '127.0.0.1', () => resolve()));
+    const authAddr = mockAuthServer.address() as any;
+    const catAddr = mockCatalogServer.address() as any;
+
+    try {
+      process.env.AUTH_SERVICE_URL = `http://127.0.0.1:${authAddr.port}`;
+      process.env.CATALOG_SERVICE_URL = `http://127.0.0.1:${catAddr.port}`;
+
+      // 1) Missing Authorization header -> 401 with Spanish sign-in message, zero upstream calls
+      const noAuthPost = await fetch(`${bffUrl}/api/v1/saved`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ destinationName: 'Valparaíso', totalBudgetClp: 45000 }),
+      });
+      assert.equal(noAuthPost.status, 401);
+      const noAuthBody = (await noAuthPost.json()) as any;
+      assert.match(noAuthBody.error, /iniciar sesión/i);
+      assert.equal(authMeCalls, 0);
+      assert.equal(catalogSaveCalls, 0);
+
+      // 2) Whitespace-only Bearer token -> 401, zero upstream calls
+      const blankBearerPost = await fetch(`${bffUrl}/api/v1/saved`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer    ',
+        },
+        body: JSON.stringify({ destinationName: 'Valparaíso' }),
+      });
+      assert.equal(blankBearerPost.status, 401);
+      assert.equal(authMeCalls, 0);
+      assert.equal(catalogSaveCalls, 0);
+
+      // 3) Invalid / expired token -> 401, catalog-service never called
+      const badTokenPost = await fetch(`${bffUrl}/api/v1/saved`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer expired-token',
+        },
+        body: JSON.stringify({ destinationName: 'Valparaíso' }),
+      });
+      assert.equal(badTokenPost.status, 401);
+      const badTokenBody = (await badTokenPost.json()) as any;
+      assert.match(badTokenBody.error, /iniciar sesión/i);
+      assert.equal(authMeCalls, 1);
+      assert.equal(catalogSaveCalls, 0);
+
+      // 4) Malformed user payload -> 401 (never falls back to userId 1)
+      const malformedUserPost = await fetch(`${bffUrl}/api/v1/saved`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer malformed-user-payload',
+        },
+        body: JSON.stringify({ destinationName: 'Valparaíso' }),
+      });
+      assert.equal(malformedUserPost.status, 401);
+      assert.equal(catalogSaveCalls, 0);
+
+      // 5) GET /api/v1/saved without Authorization -> 401
+      const noAuthGet = await fetch(`${bffUrl}/api/v1/saved`);
+      assert.equal(noAuthGet.status, 401);
+
+      // 6) Valid JWT -> saves and queries under authenticated userId 42
+      const okPost = await fetch(`${bffUrl}/api/v1/saved`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer valid-jwt-user-42',
+        },
+        body: JSON.stringify({
+          destinationName: 'Pucón',
+          totalBudgetClp: 120000,
+          itineraryData: { id: 'pucon-1' },
+        }),
+      });
+      assert.equal(okPost.status, 201);
+      assert.equal(catalogSaveCalls, 1);
+      assert.equal(lastSavedPayload.userId, 42);
+      assert.equal(lastSavedPayload.destinationName, 'Pucón');
+
+      const okGet = await fetch(`${bffUrl}/api/v1/saved`, {
+        headers: { Authorization: 'Bearer valid-jwt-user-42' },
+      });
+      assert.equal(okGet.status, 200);
+      assert.equal(lastGetSavedPath, '/saved/42');
+    } finally {
+      if (origAuthUrl === undefined) delete process.env.AUTH_SERVICE_URL;
+      else process.env.AUTH_SERVICE_URL = origAuthUrl;
+      if (origCatalogUrl === undefined) delete process.env.CATALOG_SERVICE_URL;
+      else process.env.CATALOG_SERVICE_URL = origCatalogUrl;
+      await new Promise<void>((resolve) => mockAuthServer.close(() => resolve()));
+      await new Promise<void>((resolve) => mockCatalogServer.close(() => resolve()));
+    }
+  });
 });

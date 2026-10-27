@@ -64,8 +64,10 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 // -------------------------------------------------------------
 async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextFunction) {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No autorizado. Se requiere header Authorization: Bearer <token>.' });
+  if (!authHeader || !authHeader.startsWith('Bearer ') || !authHeader.slice(7).trim()) {
+    return res.status(401).json({
+      error: 'Debes iniciar sesión previamente para guardar o consultar tus rutas.',
+    });
   }
 
   try {
@@ -81,11 +83,25 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
     );
 
     if (!authRes.ok) {
-      return res.status(401).json({ error: 'Token inválido o sesión expirada.' });
+      return res.status(401).json({
+        error: 'Sesión inválida o expirada. Debes iniciar sesión para guardar la ruta.',
+      });
     }
 
     const data = (await authRes.json()) as any;
-    req.user = data.user || { id: data.id, email: data.email, name: data.name };
+    const resolvedUser = data.user || data;
+    const numericId = Number(resolvedUser?.id);
+    if (!Number.isFinite(numericId) || numericId <= 0 || !resolvedUser?.email) {
+      return res.status(401).json({
+        error: 'Sesión inválida. Debes iniciar sesión previamente para guardar la ruta.',
+      });
+    }
+
+    req.user = {
+      id: numericId,
+      email: String(resolvedUser.email),
+      name: String(resolvedUser.name || ''),
+    };
     return next();
   } catch (err: any) {
     console.error('[BFF] Error verificando token con auth-service:', err.message);
@@ -674,7 +690,12 @@ app.get('/api/destination-photos', handleGetPhotos);
 // -------------------------------------------------------------
 app.get('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user?.id ?? 1;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Debes iniciar sesión previamente para consultar tus rutas guardadas.',
+      });
+    }
     const catRes = await fetchWithTimeout(`${getCatalogServiceUrl()}/saved/${userId}`, {}, 8000);
     const data = await catRes.json();
     return res.status(catRes.status).json(data);
@@ -689,7 +710,12 @@ app.get('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Res
 
 app.post('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const userId = req.user?.id ?? 1;
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: 'Debes iniciar sesión previamente para guardar la ruta.',
+      });
+    }
     const payload = {
       ...req.body,
       userId,

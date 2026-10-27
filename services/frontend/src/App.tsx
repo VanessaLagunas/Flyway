@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ActiveScreen, BudgetLevel, Trip } from './types';
-import { INITIAL_SAVED_TRIPS, INITIAL_VALPARAISO_TRIP } from './data/mockTrips';
+import { INITIAL_VALPARAISO_TRIP } from './data/mockTrips';
 import { ODCHeader } from './odc-components/ODCHeader';
 import { ODCBottomNav } from './odc-components/ODCBottomNav';
 import { ODCLoadingOverlay } from './odc-components/ODCLoadingOverlay';
@@ -13,52 +13,79 @@ import { generateSmartTrip } from './utils/tripGenerator';
 import { ensureTripHasPexelsPhotos } from './utils/photoUtils';
 import { getBffUrl, parseJsonSafe } from './utils/apiUrl';
 import {
+  isUserAuthenticated,
+  getSavedTripsStorageKey,
+  evaluateSaveTripAttempt,
+  SAVE_AUTH_REQUIRED_MESSAGE,
+  SAVE_SESSION_EXPIRED_MESSAGE,
+} from './utils/authGuard';
+import {
   getWeatherAndClothingForTrip,
   fetchWeatherAndClothingForTrip,
   getBudgetTierInfo,
 } from './utils/weatherUtils';
 
+function readStoredAuthToken(): string | null {
+  try {
+    const raw = localStorage.getItem('flyway_token');
+    return raw && raw.trim() ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredUserEmail(): string | null {
+  try {
+    const token = readStoredAuthToken();
+    if (!token) return null;
+    const rawUser = localStorage.getItem('flyway_user');
+    if (rawUser) {
+      const parsed = JSON.parse(rawUser) as AuthUser;
+      return parsed?.email && parsed.email.trim() ? parsed.email.trim() : null;
+    }
+  } catch {}
+  return null;
+}
+
+function readSavedTripsForKey(storageKey: string | null): Trip[] {
+  if (!storageKey) return [];
+  try {
+    const cached = localStorage.getItem(storageKey);
+    if (cached) {
+      const parsed = JSON.parse(cached) as Trip[];
+      if (Array.isArray(parsed)) {
+        return parsed.filter((t) => t && t.id && Array.isArray(t.days));
+      }
+    }
+  } catch {}
+  return [];
+}
+
 export default function App() {
   const [activeScreen, setActiveScreen] = useState<ActiveScreen>('explore');
   const [previousScreen, setPreviousScreen] = useState<ActiveScreen>('explore');
   const [currentTrip, setCurrentTrip] = useState<Trip>(INITIAL_VALPARAISO_TRIP);
-  const [savedTrips, setSavedTrips] = useState<Trip[]>(() => {
-    try {
-      const cached = localStorage.getItem('flyway_saved_trips');
-      if (cached) {
-        const parsed = JSON.parse(cached) as Trip[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
-        }
-      }
-    } catch {}
-    return INITIAL_SAVED_TRIPS;
-  });
   const [isLoading, setIsLoading] = useState(false);
   const [loadingTitle, setLoadingTitle] = useState('Creando tu ruta con IA');
   const [loadingSubtitle, setLoadingSubtitle] = useState('Consultando modelos de IA y ajustando presupuesto…');
   const [apiError, setApiError] = useState<string | null>(null);
 
-  const [authToken, setAuthToken] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('flyway_token');
-    } catch {
-      return null;
-    }
-  });
+  const [authToken, setAuthToken] = useState<string | null>(() => readStoredAuthToken());
+  const [userEmail, setUserEmail] = useState<string | null>(() => readStoredUserEmail());
 
-  const [userEmail, setUserEmail] = useState<string | null>(() => {
-    try {
-      const rawUser = localStorage.getItem('flyway_user');
-      if (rawUser) {
-        const parsed = JSON.parse(rawUser) as AuthUser;
-        return parsed.email || null;
-      }
-    } catch {}
-    return null;
-  });
+  const initialStorageKey = isUserAuthenticated(authToken, userEmail)
+    ? getSavedTripsStorageKey(userEmail)
+    : null;
+  const loadedStorageKeyRef = useRef<string | null>(initialStorageKey);
+
+  const [savedTrips, setSavedTrips] = useState<Trip[]>(() =>
+    readSavedTripsForKey(initialStorageKey)
+  );
+  const [saveAuthPromptMessage, setSaveAuthPromptMessage] = useState<string | null>(null);
+  const [loginAuthPrompt, setLoginAuthPrompt] = useState<string | null>(null);
 
   const bffUrl = getBffUrl();
+  const isAuthenticated = isUserAuthenticated(authToken, userEmail);
 
   // Verificar validez del token JWT en el servidor al cargar la aplicación
   useEffect(() => {
@@ -67,23 +94,28 @@ export default function App() {
       return;
     }
 
+    let cancelled = false;
     fetch(`${bffUrl}/auth/me`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${authToken}` },
     })
       .then((res) => {
+        if (cancelled) return null;
         if (!res.ok) {
           try {
             localStorage.removeItem('flyway_token');
             localStorage.removeItem('flyway_user');
           } catch {}
+          loadedStorageKeyRef.current = null;
           setAuthToken(null);
           setUserEmail(null);
+          setSavedTrips([]);
           return null;
         }
         return parseJsonSafe(res);
       })
       .then((data) => {
+        if (cancelled) return;
         if (data?.user?.email) {
           setUserEmail(data.user.email);
           try {
@@ -92,28 +124,74 @@ export default function App() {
         }
       })
       .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
   }, [authToken, bffUrl]);
 
-  // Persistir savedTrips en localStorage ante cualquier cambio para no perder rutas al recargar
+  // Cargar rutas guardadas únicamente para el usuario autenticado actual
   useEffect(() => {
-    try {
-      localStorage.setItem('flyway_saved_trips', JSON.stringify(savedTrips));
-    } catch {}
-  }, [savedTrips]);
+    const storageKey = isUserAuthenticated(authToken, userEmail)
+      ? getSavedTripsStorageKey(userEmail)
+      : null;
 
-  // Sincronizar itinerarios guardados desde el backend (con o sin token JWT)
-  useEffect(() => {
-    const headers: Record<string, string> = {};
-    if (authToken) {
-      headers.Authorization = `Bearer ${authToken}`;
+    if (!storageKey) {
+      loadedStorageKeyRef.current = null;
+      setSavedTrips([]);
+      return;
     }
 
+    if (loadedStorageKeyRef.current !== storageKey) {
+      const cached = readSavedTripsForKey(storageKey);
+      loadedStorageKeyRef.current = storageKey;
+      setSavedTrips(cached);
+    }
+  }, [authToken, userEmail]);
+
+  // Persistir savedTrips en localStorage por usuario únicamente si ha iniciado sesión
+  useEffect(() => {
+    const storageKey = isUserAuthenticated(authToken, userEmail)
+      ? getSavedTripsStorageKey(userEmail)
+      : null;
+
+    if (!storageKey || loadedStorageKeyRef.current !== storageKey) {
+      return;
+    }
+
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(savedTrips));
+    } catch {}
+  }, [savedTrips, authToken, userEmail]);
+
+  // Sincronizar itinerarios guardados desde el backend solo cuando el usuario está autenticado
+  useEffect(() => {
+    if (!isUserAuthenticated(authToken, userEmail) || !authToken) {
+      return;
+    }
+
+    let cancelled = false;
     fetch(`${bffUrl}/saved`, {
       method: 'GET',
-      headers,
+      headers: { Authorization: `Bearer ${authToken}` },
     })
-      .then((res) => (res.ok ? parseJsonSafe(res) : null))
+      .then((res) => {
+        if (cancelled) return null;
+        if (res.status === 401) {
+          try {
+            localStorage.removeItem('flyway_token');
+            localStorage.removeItem('flyway_user');
+          } catch {}
+          loadedStorageKeyRef.current = null;
+          setAuthToken(null);
+          setUserEmail(null);
+          setSavedTrips([]);
+          return null;
+        }
+        return res.ok ? parseJsonSafe(res) : null;
+      })
       .then((data) => {
+        if (cancelled) return;
         if (data && Array.isArray(data.saved) && data.saved.length > 0) {
           const remoteTrips: Trip[] = data.saved
             .map((row: any) => row.itinerary_data)
@@ -128,17 +206,26 @@ export default function App() {
         }
       })
       .catch(() => {
-        // Fallback silencioso a datos locales si el servidor no está disponible
+        // Fallback silencioso a datos locales del usuario autenticado si el servidor no está disponible
       });
-  }, [authToken, bffUrl]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authToken, userEmail, bffUrl]);
 
   const handleLogout = () => {
     try {
       localStorage.removeItem('flyway_token');
       localStorage.removeItem('flyway_user');
+      localStorage.removeItem('flyway_saved_trips');
     } catch {}
+    loadedStorageKeyRef.current = null;
     setAuthToken(null);
     setUserEmail(null);
+    setSavedTrips([]);
+    setSaveAuthPromptMessage(null);
+    setLoginAuthPrompt(null);
     setActiveScreen('login');
   };
 
@@ -247,6 +334,7 @@ export default function App() {
           budgetRangeText: rawTripObj.budgetRangeText || budgetInfo.dailyRangeText,
           budgetDescription: rawTripObj.budgetDescription || budgetInfo.description,
         });
+        setSaveAuthPromptMessage(null);
         setCurrentTrip(enrichedTrip);
         setActiveScreen('itinerary');
       } else {
@@ -291,6 +379,7 @@ export default function App() {
         fallbackTrip.aiSource = 'synthesis';
         fallbackTrip.generatedByModel = 'Flyway Smart Engine (Modo Local)';
 
+        setSaveAuthPromptMessage(null);
         setCurrentTrip(fallbackTrip);
         setActiveScreen('itinerary');
       } else {
@@ -305,45 +394,69 @@ export default function App() {
   };
 
   const handleSaveTrip = (tripToSave: Trip) => {
-    const exists = savedTrips.some((t) => t.id === tripToSave.id);
-    if (!exists) {
-      const savedCopy = { ...tripToSave, isFavorite: true };
-      setSavedTrips((prev) => [savedCopy, ...prev]);
+    const decision = evaluateSaveTripAttempt({
+      authToken,
+      userEmail,
+      savedTrips,
+      tripToSave,
+    });
 
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      if (authToken) {
-        headers.Authorization = `Bearer ${authToken}`;
-      }
+    if (!decision.allowed) {
+      setSaveAuthPromptMessage(decision.message);
+      return;
+    }
 
+    setSaveAuthPromptMessage(null);
+    setSavedTrips(decision.nextSavedTrips);
+
+    if (decision.action === 'saved' && decision.savedTrip && authToken) {
+      const savedCopy = decision.savedTrip;
       fetch(`${bffUrl}/saved`, {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           id: savedCopy.id,
           destinationName: savedCopy.destination || savedCopy.title,
           totalBudgetClp: savedCopy.totalCost,
           itineraryData: savedCopy,
         }),
-      }).catch((e) => console.warn('[Frontend] No se pudo persistir en backend:', e));
-    } else {
-      setSavedTrips((prev) => prev.filter((t) => t.id !== tripToSave.id));
+      })
+        .then((res) => {
+          if (res.status === 401) {
+            try {
+              localStorage.removeItem('flyway_token');
+              localStorage.removeItem('flyway_user');
+            } catch {}
+            loadedStorageKeyRef.current = null;
+            setAuthToken(null);
+            setUserEmail(null);
+            setSavedTrips([]);
+            setSaveAuthPromptMessage(SAVE_SESSION_EXPIRED_MESSAGE);
+          }
+        })
+        .catch((e) => console.warn('[Frontend] No se pudo persistir en backend:', e));
     }
   };
 
   const handleRemoveTrip = (tripId: string) => {
+    if (!isAuthenticated) return;
     setSavedTrips((prev) => prev.filter((t) => t.id !== tripId));
   };
 
   const handleUpdateTrip = (updatedTrip: Trip) => {
     setCurrentTrip(updatedTrip);
-    setSavedTrips((prev) =>
-      prev.map((t) => (t.id === updatedTrip.id ? updatedTrip : t))
-    );
+    if (isAuthenticated) {
+      setSavedTrips((prev) =>
+        prev.map((t) => (t.id === updatedTrip.id ? updatedTrip : t))
+      );
+    }
   };
 
   const handleViewSavedTrip = (trip: Trip) => {
+    setSaveAuthPromptMessage(null);
     setCurrentTrip(trip);
     setActiveScreen('itinerary');
   };
@@ -353,12 +466,18 @@ export default function App() {
       {/* Header común para la aplicación */}
       <div className="max-w-[760px] lg:max-w-[860px] w-full mx-auto px-4 pt-3 sm:pt-4">
         <ODCHeader
-          onLogoClick={() => setActiveScreen('explore')}
+          onLogoClick={() => {
+            setSaveAuthPromptMessage(null);
+            setLoginAuthPrompt(null);
+            setActiveScreen('explore');
+          }}
           onOpenLogin={() => {
+            setSaveAuthPromptMessage(null);
+            setLoginAuthPrompt(null);
             setPreviousScreen(activeScreen);
             setActiveScreen('login');
           }}
-          userEmail={userEmail}
+          userEmail={isAuthenticated ? userEmail : null}
           onLogout={handleLogout}
         />
       </div>
@@ -402,21 +521,34 @@ export default function App() {
               <ItineraryScreen
                 key={currentTrip.id}
                 trip={currentTrip}
-                onBack={() => setActiveScreen('explore')}
+                onBack={() => {
+                  setSaveAuthPromptMessage(null);
+                  setActiveScreen('explore');
+                }}
                 onSaveTrip={handleSaveTrip}
-                isSaved={savedTrips.some((t) => t.id === currentTrip.id)}
+                isSaved={isAuthenticated && savedTrips.some((t) => t.id === currentTrip.id)}
+                isAuthenticated={isAuthenticated}
+                saveAuthMessage={saveAuthPromptMessage}
+                onDismissSaveAuthMessage={() => setSaveAuthPromptMessage(null)}
+                onRequestLogin={() => {
+                  setSaveAuthPromptMessage(null);
+                  setLoginAuthPrompt(SAVE_AUTH_REQUIRED_MESSAGE);
+                  setPreviousScreen('itinerary');
+                  setActiveScreen('login');
+                }}
                 onUpdateTrip={handleUpdateTrip}
               />
             )}
 
             {activeScreen === 'saved' && (
               <SavedTripsScreen
-                savedTrips={savedTrips}
+                savedTrips={isAuthenticated ? savedTrips : []}
                 onViewTrip={handleViewSavedTrip}
                 onRemoveTrip={handleRemoveTrip}
                 onGoToExplore={() => setActiveScreen('explore')}
-                userEmail={userEmail}
+                userEmail={isAuthenticated ? userEmail : null}
                 onOpenLogin={() => {
+                  setLoginAuthPrompt(SAVE_AUTH_REQUIRED_MESSAGE);
                   setPreviousScreen('saved');
                   setActiveScreen('login');
                 }}
@@ -425,12 +557,17 @@ export default function App() {
 
             {activeScreen === 'login' && (
               <LoginScreen
+                authPromptMessage={loginAuthPrompt}
                 onLoginSuccess={(email, _user, token) => {
+                  const resolvedToken = token || readStoredAuthToken();
                   setUserEmail(email);
-                  if (token) setAuthToken(token);
+                  if (resolvedToken) setAuthToken(resolvedToken);
+                  setSaveAuthPromptMessage(null);
+                  setLoginAuthPrompt(null);
                   setActiveScreen(previousScreen === 'login' ? 'explore' : previousScreen);
                 }}
                 onContinueWithoutAccount={() => {
+                  setLoginAuthPrompt(null);
                   setActiveScreen(previousScreen === 'login' ? 'explore' : previousScreen);
                 }}
               />
@@ -442,8 +579,11 @@ export default function App() {
       {/* Navegación inferior fija */}
       <ODCBottomNav
         activeTab={activeScreen}
-        onTabChange={(tab) => setActiveScreen(tab)}
-        savedCount={savedTrips.length}
+        onTabChange={(tab) => {
+          setSaveAuthPromptMessage(null);
+          setActiveScreen(tab);
+        }}
+        savedCount={isAuthenticated ? savedTrips.length : 0}
       />
 
       {/* Overlay de carga al planificar */}

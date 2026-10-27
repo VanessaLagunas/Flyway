@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { ODCInput } from '../odc-components/ODCInput';
 import { ODCButton } from '../odc-components/ODCButton';
 import { getBffUrl, parseJsonSafe } from '../utils/apiUrl';
@@ -14,6 +14,7 @@ export interface AuthUser {
 export interface LoginScreenProps {
   onLoginSuccess: (email: string, user?: AuthUser, token?: string) => void;
   onContinueWithoutAccount: () => void;
+  authPromptMessage?: string | null;
 }
 
 declare global {
@@ -115,6 +116,7 @@ function ensureGoogleScriptLoaded(): Promise<boolean> {
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onLoginSuccess,
   onContinueWithoutAccount,
+  authPromptMessage,
 }) => {
   const [mode, setMode] = useState<'login' | 'register'>('login');
   const [name, setName] = useState('');
@@ -124,16 +126,15 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [googleClientId, setGoogleClientId] = useState<string>(() =>
-    ((import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) || '').trim()
+    (typeof import.meta !== 'undefined' && import.meta.env && typeof import.meta.env.VITE_GOOGLE_CLIENT_ID === 'string'
+      ? import.meta.env.VITE_GOOGLE_CLIENT_ID
+      : ''
+    ).trim()
   );
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [gsiReady, setGsiReady] = useState<boolean>(() =>
-    typeof window !== 'undefined' && Boolean(window.google?.accounts)
-  );
   const [showGoogleSetupHelp, setShowGoogleSetupHelp] = useState(false);
   const [originCopied, setOriginCopied] = useState(false);
 
-  const googleBtnContainerRef = useRef<HTMLDivElement>(null);
   const bffUrl = getBffUrl();
   const currentOrigin =
     typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
@@ -178,15 +179,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
 
   // Precargar Google Identity Services al montar para evitar bloqueadores de popups al hacer clic
   useEffect(() => {
-    let active = true;
-    ensureGoogleScriptLoaded().then((ready) => {
-      if (active && ready) {
-        setGsiReady(true);
-      }
-    });
-    return () => {
-      active = false;
-    };
+    void ensureGoogleScriptLoaded();
   }, []);
 
   // Descubrimiento dinámico de GOOGLE_CLIENT_ID en runtime desde el BFF / auth-service
@@ -214,33 +207,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       cancelled = true;
     };
   }, [bffUrl]);
-
-  // Renderizar botón oficial Google Identity Services cuando googleClientId y GSI están disponibles
-  useEffect(() => {
-    if (!googleClientId || !gsiReady || !googleBtnContainerRef.current) return;
-    if (!window.google?.accounts?.id) return;
-
-    try {
-      window.google.accounts.id.initialize({
-        client_id: googleClientId,
-        callback: (response) => {
-          if (response.credential) {
-            void completeGoogleLogin({ credential: response.credential });
-          }
-        },
-      });
-      googleBtnContainerRef.current.innerHTML = '';
-      window.google.accounts.id.renderButton(googleBtnContainerRef.current, {
-        theme: 'outline',
-        size: 'large',
-        text: mode === 'register' ? 'signup_with' : 'continue_with',
-        shape: 'pill',
-        width: 340,
-      });
-    } catch {
-      // Si el iframe de GIS no puede renderizar, el botón principal OAuth2 sigue operativo
-    }
-  }, [googleClientId, gsiReady, mode, completeGoogleLogin]);
 
   const openGoogleOAuthPopup = (clientIdToUse: string): boolean => {
     const oauth2 = window.google?.accounts?.oauth2;
@@ -334,7 +300,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       );
       return;
     }
-    setGsiReady(true);
     openGoogleOAuthPopup(resolvedClientId);
   };
 
@@ -441,34 +406,40 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
           : 'Regístrate con Google en un clic o con tu correo para guardar itinerarios en CLP.'}
       </p>
 
-      {/* Selector Login / Crear cuenta */}
-      <div className="flex justify-center gap-2 mb-4">
+      {authPromptMessage && (
+        <div
+          className="mb-4 p-3.5 rounded-2xl bg-[#E1F2E2] border border-[#9CCBA2] text-[#1B3B25] text-xs sm:text-sm font-semibold leading-relaxed"
+          role="alert"
+          id="login-auth-prompt-banner"
+        >
+          🔒 {authPromptMessage}
+        </div>
+      )}
+
+      {/* Selector Iniciar sesión / Crear cuenta con alto contraste */}
+      <div className="fw-auth-switcher" role="tablist" aria-label="Modo de acceso">
         <button
           type="button"
+          role="tab"
+          aria-selected={mode === 'login'}
           onClick={() => {
             setMode('login');
             setError(null);
           }}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-            mode === 'login'
-              ? 'bg-[var(--fw-primary)] text-white'
-              : 'bg-[var(--fw-surface)] text-[var(--fw-text-muted)] border border-[var(--fw-border)]'
-          }`}
+          className={`fw-auth-tab ${mode === 'login' ? 'is-active' : ''}`}
           id="tab-mode-login"
         >
           Iniciar sesión
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={mode === 'register'}
           onClick={() => {
             setMode('register');
             setError(null);
           }}
-          className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
-            mode === 'register'
-              ? 'bg-[var(--fw-primary)] text-white'
-              : 'bg-[var(--fw-surface)] text-[var(--fw-text-muted)] border border-[var(--fw-border)]'
-          }`}
+          className={`fw-auth-tab ${mode === 'register' ? 'is-active' : ''}`}
           id="tab-mode-register"
         >
           Crear cuenta
@@ -476,14 +447,14 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
       </div>
 
       <form onSubmit={handleSubmit} className="fw-card" noValidate>
-        {/* Acceso real con Google OAuth 2.0 (válido para registro e inicio de sesión) */}
+        {/* Acceso único con Google OAuth 2.0 (válido para registro e inicio de sesión) */}
         <div className="mb-4">
           <button
             type="button"
             id="btn-google-login"
             disabled={isGoogleLoading || isSubmitting}
             onClick={handleGoogleClick}
-            className="w-full flex items-center justify-center gap-3 px-4 py-2.5 rounded-xl bg-white text-slate-800 font-semibold text-sm border border-slate-300 shadow-xs hover:bg-slate-50 disabled:opacity-60 transition-all cursor-pointer"
+            className="fw-google-btn"
           >
             <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true">
               <path
@@ -504,21 +475,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
               />
             </svg>
             <span>
-              {isGoogleLoading
-                ? 'Conectando con Google...'
-                : mode === 'register'
-                ? 'Registrarse con Google'
-                : 'Continuar con Google'}
+              {isGoogleLoading ? 'Conectando con Google...' : 'Continuar con Google'}
             </span>
           </button>
-
-          {/* Contenedor oficial Google Identity Services (One Tap / Personalized Button) */}
-          {googleClientId && (
-            <div
-              className="mt-2.5 flex justify-center w-full empty:hidden"
-              ref={googleBtnContainerRef}
-            />
-          )}
 
           {/* Guía clara de configuración OAuth 2.0 si GOOGLE_CLIENT_ID aún no está definido */}
           {showGoogleSetupHelp && !googleClientId && (
