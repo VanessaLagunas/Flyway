@@ -444,7 +444,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
       {/* Encabezado del viaje */}
       <div className="fw-trip-head">
         <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
-          <h1 className="m-0 text-3xl font-bold text-[#1E1F19]">{trip.destination}</h1>
+          <h1 className="m-0 text-2xl sm:text-3xl font-bold text-[#1E1F19]">{trip.destination}</h1>
           {trip.destinationCountry && (
             <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-[#E1F2E2] text-[#264D33] border border-[#C6E4C8]">
               {trip.destinationCountry}
@@ -670,7 +670,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                   </div>
                 </div>
 
-                <div className="fw-timeline pl-2 sm:pl-4">
+                <div className="fw-timeline">
                   {day.items.map((item, idx) => {
                     if (item.type === 'activity') {
                       return (

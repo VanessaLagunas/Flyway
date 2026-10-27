@@ -383,12 +383,13 @@ export const ODCDateRangePicker: React.FC<ODCDateRangePickerProps> = ({
 
       {/* POPUP DE CALENDARIO VISUAL INTERACTIVO */}
       {calendarOpen && (
-        <div className="absolute z-50 left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-[var(--fw-border)] p-4 max-w-sm mx-auto">
+        <div className="absolute z-50 left-0 right-0 mt-2 bg-white rounded-xl shadow-xl border border-[var(--fw-border)] p-2.5 sm:p-4 max-w-sm mx-auto">
           {/* Header de pestañas Ida / Vuelta */}
           <div className="flex bg-[#F0ECE1] rounded-lg p-1 mb-3">
             <button
               type="button"
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+              className={`flex-1 py-1.5 px-1 sm:px-2 text-[11px] sm:text-xs truncate font-semibold rounded-md transition-all ${
+
                 activePickingTab === 'start'
                   ? 'bg-white text-[#1E1F19] shadow-sm'
                   : 'text-[#6B6A63] hover:text-[#1E1F19]'
@@ -399,7 +400,8 @@ export const ODCDateRangePicker: React.FC<ODCDateRangePickerProps> = ({
             </button>
             <button
               type="button"
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-md transition-all ${
+              className={`flex-1 py-1.5 px-1 sm:px-2 text-[11px] sm:text-xs truncate font-semibold rounded-md transition-all ${
+
                 activePickingTab === 'end'
                   ? 'bg-white text-[#1E1F19] shadow-sm'
                   : 'text-[#6B6A63] hover:text-[#1E1F19]'

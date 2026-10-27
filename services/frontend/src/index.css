@@ -81,7 +81,13 @@ h3 { font-size: 18px; font-weight: 600; }
   background: var(--fw-surface);
   border-radius: var(--fw-radius-card);
   box-shadow: var(--fw-shadow);
-  padding: 20px;
+  padding: 16px;
+}
+
+@media (min-width: 480px) {
+  .fw-card {
+    padding: 20px;
+  }
 }
 
 .form-control, input.form-control, .fw-input {
@@ -89,11 +95,18 @@ h3 { font-size: 18px; font-weight: 600; }
   border: 1px solid var(--fw-border);
   border-radius: var(--fw-radius-input);
   min-height: 48px;
-  padding: 0 16px;
-  font-size: 15px;
+  padding: 0 12px;
+  font-size: 14px;
   font-family: inherit;
   color: var(--fw-text);
   transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+@media (min-width: 480px) {
+  .form-control, input.form-control, .fw-input {
+    padding: 0 16px;
+    font-size: 15px;
+  }
 }
 
 .form-control:focus {
@@ -152,17 +165,26 @@ h3 { font-size: 18px; font-weight: 600; }
 .fw-segmented__item {
   flex: 1;
   text-align: center;
-  padding: 10px 0;
+  padding: 8px 2px;
   border-radius: 10px;
   color: var(--fw-text-muted);
   cursor: pointer;
   font-weight: 500;
+  font-size: 13px;
+  line-height: 1.25;
   min-height: 42px;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.15s;
   user-select: none;
+}
+
+@media (min-width: 420px) {
+  .fw-segmented__item {
+    padding: 10px 0;
+    font-size: 14px;
+  }
 }
 
 .fw-segmented__item.is-active {
@@ -259,6 +281,13 @@ h3 { font-size: 18px; font-weight: 600; }
   flex-shrink: 0;
 }
 
+@media (max-width: 380px) {
+  .fw-activity__img {
+    width: 64px;
+    height: 64px;
+  }
+}
+
 .fw-transfer {
   display: flex;
   gap: 8px;
@@ -338,7 +367,8 @@ h3 { font-size: 18px; font-weight: 600; }
   left: 0;
   right: 0;
   bottom: 0;
-  height: var(--fw-bottom-nav-h);
+  min-height: var(--fw-bottom-nav-h);
+  height: calc(var(--fw-bottom-nav-h) + env(safe-area-inset-bottom, 0px));
   background: rgba(247,244,237,.96);
   backdrop-filter: blur(8px);
   border-top: 1px solid var(--fw-border);
@@ -346,7 +376,7 @@ h3 { font-size: 18px; font-weight: 600; }
   justify-content: space-around;
   align-items: center;
   z-index: 50;
-  padding-bottom: env(safe-area-inset-bottom);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .fw-bottom-nav__item {
@@ -373,7 +403,7 @@ h3 { font-size: 18px; font-weight: 600; }
 }
 
 .fw-page {
-  padding: 16px 16px calc(var(--fw-bottom-nav-h) + 80px);
+  padding: 16px 16px calc(var(--fw-bottom-nav-h) + 80px + env(safe-area-inset-bottom, 0px));
   max-width: 720px;
   margin: 0 auto;
 }
@@ -382,7 +412,7 @@ h3 { font-size: 18px; font-weight: 600; }
   position: fixed;
   left: 16px;
   right: 16px;
-  bottom: calc(var(--fw-bottom-nav-h) + 12px);
+  bottom: calc(var(--fw-bottom-nav-h) + 12px + env(safe-area-inset-bottom, 0px));
   max-width: 688px;
   margin: 0 auto;
   z-index: 40;
@@ -452,6 +482,7 @@ h3 { font-size: 18px; font-weight: 600; }
   padding: 8px;
   z-index: 60;
   min-width: 190px;
+  max-width: calc(100vw - 32px);
   border: 1px solid var(--fw-border);
 }
 
@@ -774,17 +805,23 @@ h3 { font-size: 18px; font-weight: 600; }
   right: 0;
   bottom: 0;
   top: auto;
-  transform: none;
   margin: 0 auto;
   width: 100%;
   max-width: 720px;
-  max-height: 88vh;
+  max-height: 90vh;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   z-index: 110;
   border-radius: 28px 28px 0 0;
-  padding: 12px 20px calc(24px + env(safe-area-inset-bottom));
+  padding: 12px 16px calc(24px + env(safe-area-inset-bottom, 0px));
   background: var(--fw-bg);
   box-shadow: 0 -10px 40px rgba(30, 31, 25, 0.15);
+}
+
+@media (min-width: 480px) {
+  .popup-dialog.fw-sheet {
+    padding: 12px 20px calc(24px + env(safe-area-inset-bottom, 0px));
+  }
 }
 
 .popup-dialog.fw-sheet::before {
@@ -875,6 +912,17 @@ h3 { font-size: 18px; font-weight: 600; }
   align-items: center;
   margin-top: 16px;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 380px) {
+  .fw-trip-card__foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .fw-trip-card__foot .btn {
+    width: 100%;
+  }
 }
 
 .fw-trip-card__foot .btn {
@@ -917,7 +965,13 @@ h3 { font-size: 18px; font-weight: 600; }
   justify-content: center;
   max-width: 420px;
   margin: 0 auto;
-  padding: 24px;
+  padding: 16px 12px;
+}
+
+@media (min-width: 420px) {
+  .fw-login {
+    padding: 24px;
+  }
 }
 
 .fw-login .fw-logo {
@@ -952,8 +1006,8 @@ h3 { font-size: 18px; font-weight: 600; }
   appearance: none;
   border: 1px solid transparent;
   border-radius: 999px;
-  padding: 10px 16px;
-  font-size: 14px;
+  padding: 8px 10px;
+  font-size: 13px;
   font-weight: 700;
   font-family: inherit;
   line-height: 1.25;
@@ -962,6 +1016,14 @@ h3 { font-size: 18px; font-weight: 600; }
   background: transparent;
   color: #1E1F19;
   transition: background-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+  white-space: nowrap;
+}
+
+@media (min-width: 400px) {
+  .fw-auth-tab {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
 }
 
 .fw-auth-tab:hover:not(.is-active) {

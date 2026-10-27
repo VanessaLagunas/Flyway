@@ -312,10 +312,10 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
             {/* Cabecera del Destino con Región y Rango de Precios */}
             <div className="flex items-start justify-between gap-2 pb-2.5 border-b border-[#4A7C59]/20">
               <div>
-                <div className="flex items-center gap-1.5 font-bold text-sm text-[#1E1F19]">
+                <div className="flex flex-wrap items-center gap-1.5 font-bold text-sm text-[#1E1F19]">
                   <span className="text-base">{currentDest.flag}</span>
                   <span>{currentDest.name}</span>
-                  <span className="text-xs font-medium text-[#4A7C59] bg-[#E1F2E2] px-2 py-0.5 rounded-full">
+                  <span className="text-[11px] font-medium text-[#4A7C59] bg-[#E1F2E2] px-2 py-0.5 rounded-full shrink-0">
                     {currentDest.region}
                   </span>
                 </div>
@@ -336,7 +336,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
             {/* Selector interactivo de Comunas y Sectores */}
             {currentComunas.length > 0 && (
               <div className="mt-2.5">
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex flex-wrap items-center justify-between gap-1 mb-1.5">
                   <div className="text-xs font-bold text-[#1E1F19] flex items-center gap-1.5">
                     <Building2 className="w-3.5 h-3.5 text-[#4A7C59]" />
                     <span>Comunas y sectores recomendados:</span>
