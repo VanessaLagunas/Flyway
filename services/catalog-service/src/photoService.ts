@@ -1,6 +1,19 @@
 import { Pool } from 'pg';
-import { PexelsPhotoResult, searchPexelsPhotos } from './pexels';
+import {
+  PexelsPhotoResult,
+  searchPexelsPhotos,
+  extractPexelsPhotoId,
+  getAllHistoricalFallbackUrls,
+} from './pexels';
 import { DESTINATIONS_CATALOG } from './data/destinationsData';
+
+export const PHOTO_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+
+export interface PhotoCacheOptions {
+  bypassCache?: boolean;
+  country?: string;
+  checkDbFn?: () => Promise<boolean>;
+}
 
 export interface PhotoCacheAsideResult {
   success: boolean;
@@ -21,6 +34,7 @@ export interface PhotoCacheAsideResult {
 
 /**
  * Curated high-resolution fallback photos by normalized destination keyword
+ * (used ONLY as in-memory response when Pexels API is unavailable — never persisted to photo_cache).
  */
 const CURATED_DESTINATION_FALLBACKS: Record<string, PexelsPhotoResult> = {
   'san pedro de atacama': {
@@ -121,47 +135,75 @@ const CURATED_DESTINATION_FALLBACKS: Record<string, PexelsPhotoResult> = {
   },
 };
 
-const DEFAULT_FALLBACK_PHOTO: PexelsPhotoResult = {
+export const DEFAULT_FALLBACK_PHOTO: PexelsPhotoResult = {
   url: 'https://images.pexels.com/photos/1525041/pexels-photo-1525041.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
   photographer: 'Frans van Heerden (Pexels Curated)',
   photographerUrl: 'https://www.pexels.com/@frans-van-heerden-201846',
   alt: 'Paisaje turístico y cumbres naturales',
 };
 
+const STATIC_CONTINGENCY_BASE_URLS = new Set<string>();
+const STATIC_CONTINGENCY_PEXELS_IDS = new Set<string>();
+
+function registerContingencyUrl(rawUrl?: string | null): void {
+  if (!rawUrl || typeof rawUrl !== 'string') return;
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return;
+  STATIC_CONTINGENCY_BASE_URLS.add(trimmed.split('?')[0].trim());
+  const id = extractPexelsPhotoId(trimmed);
+  if (id) STATIC_CONTINGENCY_PEXELS_IDS.add(id);
+}
+
+registerContingencyUrl(DEFAULT_FALLBACK_PHOTO.url);
+for (const p of Object.values(CURATED_DESTINATION_FALLBACKS)) {
+  registerContingencyUrl(p.url);
+}
+for (const dest of DESTINATIONS_CATALOG) {
+  registerContingencyUrl(dest.heroImage);
+}
+for (const url of getAllHistoricalFallbackUrls()) {
+  registerContingencyUrl(url);
+}
+
+function normalizeTokenString(input: string): string {
+  return (input || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 /**
- * Normaliza el parámetro de búsqueda para query_key en PostgreSQL:
- * - minúsculas
- * - trim
- * - remueve diacríticos / tildes
- * - descarta sufijo de país o región separado por coma (ej. "San Pedro de Atacama, Chile" -> "san pedro de atacama")
+ * Normalizes query_key for PostgreSQL photo_cache, preserving country context
+ * (either inline after comma or passed via `country`) so distinct destinations
+ * across countries (e.g., Córdoba Argentina vs Córdoba España) never collide.
  */
-export function normalizePhotoQueryKey(rawQuery: string): string {
+export function normalizePhotoQueryKey(rawQuery: string, country?: string): string {
   if (!rawQuery || typeof rawQuery !== 'string') {
     return '';
   }
 
-  // 1. Descartar sufijos después de coma (ej. ", Chile", ", Perú")
-  const primaryPart = rawQuery.split(',')[0].trim() || rawQuery.trim();
+  const baseNorm = normalizeTokenString(rawQuery);
+  if (!baseNorm) return '';
 
-  // 2. Remover paréntesis opcionales, pasar a minúsculas y quitar diacríticos/tildes
-  let normalized = primaryPart
-    .replace(/\([^)]*\)/g, ' ')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+  const countryNorm = country && typeof country === 'string' ? normalizeTokenString(country) : '';
+  if (countryNorm) {
+    const baseWords = new Set(baseNorm.split(' '));
+    const countryWords = countryNorm.split(' ').filter(Boolean);
+    const missingCountryWords = countryWords.filter((w) => !baseWords.has(w));
+    if (missingCountryWords.length > 0) {
+      return `${baseNorm} ${missingCountryWords.join(' ')}`.trim().slice(0, 150);
+    }
+  }
 
-  // 3. Si el país venía sin coma al final (ej. "San Pedro de Atacama Chile"), descartarlo cuando hay más palabras antes
-  normalized = normalized.replace(
-    /\s+(?:chile|peru|argentina|brasil|brazil|japon|japan|italia|italy|francia|france|espana|spain|estados unidos|usa)$/i,
-    ''
-  );
-
-  // 4. Colapsar espacios múltiples y hacer trim
-  return normalized.replace(/\s+/g, ' ').trim();
+  return baseNorm.slice(0, 150);
 }
 
 /**
- * Extrae el nombre limpio del destino sin el sufijo del país (ej. "San Pedro de Atacama, Chile" -> "San Pedro de Atacama")
+ * Extracts clean destination name without country suffix (e.g. "San Pedro de Atacama, Chile" -> "San Pedro de Atacama").
  */
 export function extractCleanDestinationName(rawQuery: string): string {
   if (!rawQuery || typeof rawQuery !== 'string') {
@@ -171,26 +213,85 @@ export function extractCleanDestinationName(rawQuery: string): string {
   return (firstSegment || rawQuery.trim()).slice(0, 150);
 }
 
-/**
- * Obtiene una foto de respaldo curada (fallback) cuando Pexels falla, no hay API Key o no hay internet
- */
-export function getCuratedFallbackPhoto(rawQuery: string): PexelsPhotoResult {
-  const key = normalizePhotoQueryKey(rawQuery);
-  const cleanName = extractCleanDestinationName(rawQuery);
+function extractEffectiveCountry(rawQuery: string, explicitCountry?: string): string {
+  if (explicitCountry && typeof explicitCountry === 'string' && explicitCountry.trim()) {
+    return explicitCountry.trim();
+  }
+  if (rawQuery && typeof rawQuery === 'string' && rawQuery.includes(',')) {
+    return rawQuery
+      .split(',')
+      .slice(1)
+      .join(' ')
+      .replace(/\([^)]*\)/g, '')
+      .trim();
+  }
+  return '';
+}
 
-  if (CURATED_DESTINATION_FALLBACKS[key]) {
-    return CURATED_DESTINATION_FALLBACKS[key];
+/**
+ * Checks whether a cached row's updated_at timestamp is older than TTL (default 12 hours).
+ */
+export function isPhotoCacheExpired(updatedAt: unknown, ttlMs = PHOTO_CACHE_TTL_MS): boolean {
+  if (!updatedAt) return true;
+  const ts =
+    updatedAt instanceof Date
+      ? updatedAt.getTime()
+      : new Date(String(updatedAt)).getTime();
+  if (!Number.isFinite(ts)) return true;
+  return Date.now() - ts > ttlMs;
+}
+
+/**
+ * Detects whether a cached URL/photographer corresponds to a static contingency fallback
+ * rather than a live Pexels API result.
+ */
+export function isContingencyFallbackUrl(url: string, photographer = ''): boolean {
+  if (!url || typeof url !== 'string' || !url.trim().startsWith('http')) {
+    return true;
+  }
+  const cleanBase = url.trim().split('?')[0].trim();
+  if (STATIC_CONTINGENCY_BASE_URLS.has(cleanBase)) {
+    return true;
+  }
+  const photoId = extractPexelsPhotoId(url);
+  if (photoId && STATIC_CONTINGENCY_PEXELS_IDS.has(photoId)) {
+    return true;
+  }
+  if (/fallback|contingency|placeholder|unsplash\.com/i.test(url)) {
+    return true;
+  }
+  if (/pexels\s+curated|fallback|contingency/i.test(photographer || '')) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Returns a curated fallback photo when Pexels fails, has no API key, or is offline.
+ */
+export function getCuratedFallbackPhoto(rawQuery: string, country?: string): PexelsPhotoResult {
+  const cleanName = extractCleanDestinationName(rawQuery);
+  const destKey = normalizeTokenString(cleanName);
+  const fullKey = normalizePhotoQueryKey(rawQuery, country);
+
+  if (CURATED_DESTINATION_FALLBACKS[destKey]) {
+    return CURATED_DESTINATION_FALLBACKS[destKey];
   }
 
   for (const [k, photo] of Object.entries(CURATED_DESTINATION_FALLBACKS)) {
-    if (key.includes(k) || k.includes(key)) {
+    if (fullKey === k || fullKey.includes(k)) {
       return photo;
     }
   }
 
   const catalogMatch = DESTINATIONS_CATALOG.find((dest) => {
-    const destNorm = normalizePhotoQueryKey(dest.name);
-    return key.includes(destNorm) || destNorm.includes(key);
+    const destNorm = normalizeTokenString(dest.name);
+    if (!destNorm || destNorm.length < 3) return false;
+    const countryNorm = normalizeTokenString(country || '');
+    if (countryNorm && dest.country && normalizeTokenString(dest.country) !== countryNorm) {
+      return false;
+    }
+    return destKey === destNorm || fullKey.includes(destNorm);
   });
 
   if (catalogMatch && catalogMatch.heroImage) {
@@ -209,7 +310,7 @@ export function getCuratedFallbackPhoto(rawQuery: string): PexelsPhotoResult {
 }
 
 /**
- * Persiste o actualiza una foto en la tabla photo_cache de PostgreSQL usando parámetros $1..$6
+ * Persists or updates genuine Pexels API photos in PostgreSQL photo_cache.
  */
 async function persistPhotoInCache(
   pool: Pool,
@@ -241,26 +342,72 @@ async function persistPhotoInCache(
 }
 
 /**
- * Implementación del Patrón Cache-Aside sobre PostgreSQL + Pexels API + Fallback Curado:
- * a) Normaliza el parámetro de búsqueda (query_key).
- * b) Busca primero en photo_cache por query_key (Cache Hit -> retorna de DB en ms sin llamar a Pexels).
- * c) Si no existe (Cache Miss), consulta Pexels API con process.env.PEXELS_API_KEY y persiste con INSERT ... ON CONFLICT (query_key) DO UPDATE.
- * d) Si falla Pexels o no hay internet/credenciales, retorna una URL de respaldo curada sin romper la aplicación.
+ * Cache-Aside photo lookup over PostgreSQL + Pexels API + resilient non-persisted fallback.
+ * Supports both call signatures:
+ * 1) getPhotoWithCacheAside(rawDestination, requestedCount, pool, options)
+ * 2) getPhotoWithCacheAside(pool, rawQuery, count, checkDbFnOrOptions, options)
  */
+export async function getPhotoWithCacheAside(
+  rawDestination: string,
+  requestedCount?: number,
+  pool?: Pool | null,
+  options?: PhotoCacheOptions
+): Promise<PhotoCacheAsideResult>;
 export async function getPhotoWithCacheAside(
   pool: Pool,
   rawQuery: string,
-  count = 4,
-  checkDbFn?: () => Promise<boolean>
+  count?: number,
+  checkDbFnOrOptions?: (() => Promise<boolean>) | PhotoCacheOptions,
+  options?: PhotoCacheOptions
+): Promise<PhotoCacheAsideResult>;
+export async function getPhotoWithCacheAside(
+  arg1: Pool | string,
+  arg2?: string | number,
+  arg3?: number | Pool | null,
+  arg4?: (() => Promise<boolean>) | PhotoCacheOptions,
+  arg5?: PhotoCacheOptions
 ): Promise<PhotoCacheAsideResult> {
-  const queryKey = normalizePhotoQueryKey(rawQuery);
+  let pool: Pool | null | undefined;
+  let rawQuery: string;
+  let count: number;
+  let checkDbFn: (() => Promise<boolean>) | undefined;
+  let opts: PhotoCacheOptions = {};
+
+  if (typeof arg1 === 'string') {
+    rawQuery = arg1;
+    count = typeof arg2 === 'number' && arg2 > 0 ? arg2 : 4;
+    pool = arg3 && typeof (arg3 as any).query === 'function' ? (arg3 as Pool) : null;
+    if (typeof arg4 === 'function') {
+      checkDbFn = arg4;
+      opts = arg5 || {};
+    } else if (arg4 && typeof arg4 === 'object') {
+      opts = arg4;
+      checkDbFn = opts.checkDbFn;
+    }
+  } else {
+    pool = arg1;
+    rawQuery = typeof arg2 === 'string' ? arg2 : '';
+    count = typeof arg3 === 'number' && arg3 > 0 ? arg3 : 4;
+    if (typeof arg4 === 'function') {
+      checkDbFn = arg4;
+      opts = arg5 || {};
+    } else if (arg4 && typeof arg4 === 'object') {
+      opts = arg4;
+      checkDbFn = opts.checkDbFn;
+    }
+  }
+
+  const effectiveCountry = extractEffectiveCountry(rawQuery, opts.country);
+  const bypassCache = Boolean(opts.bypassCache);
+  const queryKey = normalizePhotoQueryKey(rawQuery, effectiveCountry);
   const destinationName = extractCleanDestinationName(rawQuery);
-  const dbAvailable = checkDbFn ? await checkDbFn() : true;
+  const pexelsApiKey = (process.env.PEXELS_API_KEY || '').trim();
+  const dbAvailable = Boolean(pool) && (checkDbFn ? await checkDbFn() : true);
 
   // -------------------------------------------------------------------------
-  // Paso B: Consultar primero en PostgreSQL (photo_cache por query_key)
+  // Step B: Query PostgreSQL photo_cache first (unless bypassCache is true)
   // -------------------------------------------------------------------------
-  if (dbAvailable && queryKey && queryKey.length >= 3) {
+  if (!bypassCache && dbAvailable && pool && queryKey && queryKey.length >= 3) {
     try {
       const cacheResult = await pool.query(
         `SELECT query_key, destination_name, photo_url, photographer, photographer_url, photos_json, updated_at
@@ -271,68 +418,96 @@ export async function getPhotoWithCacheAside(
 
       if (cacheResult.rows.length > 0) {
         const cached = cacheResult.rows[0];
-        const cachedPhoto: PexelsPhotoResult = {
-          url: cached.photo_url,
-          photographer: cached.photographer || 'Pexels Contributor',
-          photographerUrl: cached.photographer_url || 'https://www.pexels.com',
-          alt: cached.destination_name || destinationName,
-        };
+        const isExpired = isPhotoCacheExpired(cached.updated_at, PHOTO_CACHE_TTL_MS);
+        const isStaleFallbackRow =
+          Boolean(pexelsApiKey) &&
+          isContingencyFallbackUrl(cached.photo_url, cached.photographer);
 
-        let cachedPhotos: PexelsPhotoResult[] = [cachedPhoto];
-        if (cached.photos_json) {
-          try {
-            const parsed = typeof cached.photos_json === 'string' ? JSON.parse(cached.photos_json) : cached.photos_json;
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              cachedPhotos = parsed;
-            }
-          } catch {}
-        }
-
-        // Si la petición pide muchas fotos (ej: 10 para itinerario) y solo hay 1 en caché,
-        // permitimos enriquecer la caché desde Pexels si hay API Key.
-        if (count <= 4 || cachedPhotos.length >= 3 || !process.env.PEXELS_API_KEY) {
-          return {
-            success: true,
-            cacheHit: true,
-            source: 'database_cache',
-            query: rawQuery,
-            queryKey: cached.query_key,
-            destinationName: cached.destination_name || destinationName,
-            photoUrl: cachedPhoto.url,
-            photo_url: cachedPhoto.url,
-            photographer: cachedPhoto.photographer,
-            photographerUrl: cachedPhoto.photographerUrl,
-            photographer_url: cachedPhoto.photographerUrl,
-            updatedAt: cached.updated_at,
-            photo: cachedPhoto,
-            photos: cachedPhotos,
+        if (!isExpired && !isStaleFallbackRow) {
+          const cachedPhoto: PexelsPhotoResult = {
+            url: cached.photo_url,
+            photographer: cached.photographer || 'Pexels Contributor',
+            photographerUrl: cached.photographer_url || 'https://www.pexels.com',
+            alt: cached.destination_name || destinationName,
           };
+
+          let cachedPhotos: PexelsPhotoResult[] = [cachedPhoto];
+          if (cached.photos_json) {
+            try {
+              const parsed =
+                typeof cached.photos_json === 'string'
+                  ? JSON.parse(cached.photos_json)
+                  : cached.photos_json;
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                cachedPhotos = parsed;
+              }
+            } catch {
+              // Keep [cachedPhoto]
+            }
+          }
+
+          if (count <= 4 || cachedPhotos.length >= 3 || !pexelsApiKey) {
+            return {
+              success: true,
+              cacheHit: true,
+              source: 'database_cache',
+              query: rawQuery,
+              queryKey: cached.query_key,
+              destinationName: cached.destination_name || destinationName,
+              photoUrl: cachedPhoto.url,
+              photo_url: cachedPhoto.url,
+              photographer: cachedPhoto.photographer,
+              photographerUrl: cachedPhoto.photographerUrl,
+              photographer_url: cachedPhoto.photographerUrl,
+              updatedAt: cached.updated_at,
+              photo: cachedPhoto,
+              photos: cachedPhotos,
+            };
+          }
         }
       }
     } catch (dbReadErr: any) {
-      console.warn('[catalog-service][PhotoService] Error leyendo photo_cache en PostgreSQL:', dbReadErr?.message || dbReadErr);
+      console.warn(
+        '[catalog-service][PhotoService] Error leyendo photo_cache en PostgreSQL:',
+        dbReadErr?.message || dbReadErr
+      );
     }
   }
 
   // -------------------------------------------------------------------------
-  // Paso C: Cache Miss -> Consultar API de Pexels con process.env.PEXELS_API_KEY
+  // Step C: Cache Miss / Bypass / Stale -> Query live Pexels API
   // -------------------------------------------------------------------------
-  const pexelsApiKey = (process.env.PEXELS_API_KEY || '').trim();
   if (!pexelsApiKey) {
     console.warn(
-      `[catalog-service][PhotoService] PEXELS_API_KEY no configurada en .env para "${destinationName}". Usando URL de respaldo curada (fallback).`
+      `[catalog-service][PhotoService] PEXELS_API_KEY no configurada en .env para "${destinationName}". Usando URL de respaldo curada (sin persistir en photo_cache).`
     );
   } else {
     try {
-      const pexelsPhotos = await searchPexelsPhotos(destinationName, count);
+      const pexelsPhotos = await searchPexelsPhotos(destinationName, count, {
+        country: effectiveCountry,
+      });
+
       if (Array.isArray(pexelsPhotos) && pexelsPhotos.length > 0) {
+        // Ensure primary cached photo isn't accidentally matching a static fallback ID if other live photos exist
+        const nonContingencyIdx = pexelsPhotos.findIndex(
+          (p) => !isContingencyFallbackUrl(p.url, p.photographer)
+        );
+        if (nonContingencyIdx > 0) {
+          const [preferred] = pexelsPhotos.splice(nonContingencyIdx, 1);
+          pexelsPhotos.unshift(preferred);
+        }
+
         const primaryPhoto = pexelsPhotos[0];
 
-        if (dbAvailable && queryKey && queryKey.length >= 3) {
+        // Persist ONLY genuine pexels_api results into photo_cache
+        if (dbAvailable && pool && queryKey && queryKey.length >= 3) {
           try {
             await persistPhotoInCache(pool, queryKey, destinationName, primaryPhoto, pexelsPhotos);
           } catch (dbWriteErr: any) {
-            console.warn('[catalog-service][PhotoService] Error guardando foto de Pexels en photo_cache:', dbWriteErr?.message || dbWriteErr);
+            console.warn(
+              '[catalog-service][PhotoService] Error guardando foto de Pexels en photo_cache:',
+              dbWriteErr?.message || dbWriteErr
+            );
           }
         }
 
@@ -352,18 +527,21 @@ export async function getPhotoWithCacheAside(
           photos: pexelsPhotos,
         };
       }
-      console.warn(`[catalog-service][PhotoService] Pexels no devolvió resultados para "${destinationName}". Usando foto curada de respaldo.`);
+
+      console.warn(
+        `[catalog-service][PhotoService] Pexels no devolvió resultados para "${destinationName}". Retornando respaldo temporal SIN persistir en photo_cache.`
+      );
     } catch (pexelsErr: any) {
       console.warn(
-        `[catalog-service][PhotoService] Falló consulta a Pexels API para "${destinationName}" (${pexelsErr?.message || pexelsErr}). Usando foto curada de respaldo.`
+        `[catalog-service][PhotoService] Falló consulta a Pexels API para "${destinationName}" (${pexelsErr?.message || pexelsErr}). Retornando respaldo temporal SIN persistir en photo_cache.`
       );
     }
   }
 
   // -------------------------------------------------------------------------
-  // Paso D: Fallback curado resiliente si Pexels falla o no hay internet/API key
+  // Step D: Resilient curated fallback (NEVER persisted into photo_cache)
   // -------------------------------------------------------------------------
-  const fallbackPhoto = getCuratedFallbackPhoto(rawQuery);
+  const fallbackPhoto = getCuratedFallbackPhoto(rawQuery, effectiveCountry);
 
   return {
     success: true,

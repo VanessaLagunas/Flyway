@@ -14,8 +14,33 @@ const app = express();
 const PORT = Number(process.env.PORT) || 4003;
 const JWT_SECRET = process.env.JWT_SECRET || 'flyway-super-secret-jwt-key-2026';
 const JWT_EXPIRES_IN = '24h';
-const GOOGLE_CLIENT_ID = (process.env.GOOGLE_CLIENT_ID || '').trim();
-const googleClient = new OAuth2Client(GOOGLE_CLIENT_ID || undefined);
+const GOOGLE_OAUTH_TIMEOUT_MS = 8000;
+
+export function getGoogleClientId(): string {
+  return (
+    process.env.GOOGLE_CLIENT_ID ||
+    process.env.GOOGLE_CLIENT_ID_SECRET ||
+    process.env.VITE_GOOGLE_CLIENT_ID ||
+    ''
+  ).trim();
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs: number = GOOGLE_OAUTH_TIMEOUT_MS
+): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 app.use(express.json({ limit: '2mb' }));
 
@@ -55,6 +80,9 @@ let nextInMemoryId = 2;
 let schemaMigrated = false;
 
 async function checkDbConnection(): Promise<boolean> {
+  if (process.env.AUTH_SERVICE_DISABLE_DB === 'true') {
+    return false;
+  }
   try {
     const client = await pool.connect();
     await client.query('SELECT 1');
@@ -88,7 +116,13 @@ async function checkDbConnection(): Promise<boolean> {
   }
 }
 
-function signToken(user: { id: number; email: string; name: string; avatar_url?: string | null; auth_provider?: string }): string {
+function signToken(user: {
+  id: number;
+  email: string;
+  name: string;
+  avatar_url?: string | null;
+  auth_provider?: string;
+}): string {
   return jwt.sign(
     {
       id: user.id,
@@ -113,19 +147,39 @@ function extractToken(req: Request): string | null {
   return null;
 }
 
+function isGmailAddress(email: string): boolean {
+  return email.endsWith('@gmail.com') || email.endsWith('@googlemail.com');
+}
+
+const GOOGLE_ONLY_LOGIN_ERROR =
+  'Esta cuenta fue creada con Google. Pulsa el botón "Continuar con Google" para ingresar.';
+const UNREGISTERED_GMAIL_LOGIN_ERROR =
+  'Este correo Gmail aún no está registrado con contraseña en Flyway. Usa "Continuar con Google" para ingresar directo con tu cuenta Google, o pestaña "Crear cuenta".';
+
 // -------------------------------------------------------------
-// 1. Healthcheck (GET /health)
+// 1. Healthcheck (GET /health) & Runtime Auth Config (GET /config)
 // -------------------------------------------------------------
 app.get('/health', async (_req: Request, res: Response) => {
   const dbOk = await checkDbConnection();
+  const clientId = getGoogleClientId();
   return res.json({
     status: 'ok',
     service: 'auth-service',
     port: PORT,
+    googleEnabled: Boolean(clientId),
     database: {
       connected: dbOk,
     },
     timestamp: new Date().toISOString(),
+  });
+});
+
+app.get('/config', (_req: Request, res: Response) => {
+  const clientId = getGoogleClientId();
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  return res.status(200).json({
+    googleEnabled: Boolean(clientId),
+    googleClientId: clientId,
   });
 });
 
@@ -144,26 +198,43 @@ app.post('/register', async (req: Request, res: Response) => {
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    const cleanName = (name && typeof name === 'string' && name.trim()) ? name.trim() : cleanEmail.split('@')[0];
+    const cleanName =
+      name && typeof name === 'string' && name.trim() ? name.trim() : cleanEmail.split('@')[0];
     const passwordHash = await bcrypt.hash(password, 10);
 
     // Intentar guardar en PostgreSQL
     if (await checkDbConnection()) {
       try {
-        const existing = await pool.query('SELECT id FROM users WHERE LOWER(email) = $1', [cleanEmail]);
+        const existing = await pool.query(
+          'SELECT id, password_hash, auth_provider FROM users WHERE LOWER(email) = $1 LIMIT 1',
+          [cleanEmail]
+        );
         if (existing.rows.length > 0) {
+          const row = existing.rows[0];
+          if (!row.password_hash && row.auth_provider === 'google') {
+            return res.status(409).json({
+              error:
+                'Este correo ya está vinculado con Google. Pulsa "Continuar con Google" para ingresar.',
+            });
+          }
           return res.status(409).json({ error: 'El correo electrónico ya está registrado.' });
         }
 
         const insertRes = await pool.query(
-          `INSERT INTO users (email, password_hash, name, created_at)
-           VALUES ($1, $2, $3, NOW())
-           RETURNING id, email, name, created_at`,
+          `INSERT INTO users (email, password_hash, name, auth_provider, created_at)
+           VALUES ($1, $2, $3, 'local', NOW())
+           RETURNING id, email, name, auth_provider, avatar_url, created_at`,
           [cleanEmail, passwordHash, cleanName]
         );
 
         const row = insertRes.rows[0];
-        const user = { id: Number(row.id), email: row.email, name: row.name };
+        const user = {
+          id: Number(row.id),
+          email: row.email,
+          name: row.name,
+          auth_provider: row.auth_provider || 'local',
+          avatar_url: row.avatar_url || null,
+        };
         const token = signToken(user);
 
         return res.status(201).json({
@@ -179,6 +250,12 @@ app.post('/register', async (req: Request, res: Response) => {
     // Fallback en memoria
     const existsMem = inMemoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
     if (existsMem) {
+      if (!existsMem.password_hash && existsMem.auth_provider === 'google') {
+        return res.status(409).json({
+          error:
+            'Este correo ya está vinculado con Google. Pulsa "Continuar con Google" para ingresar.',
+        });
+      }
       return res.status(409).json({ error: 'El correo electrónico ya está registrado.' });
     }
 
@@ -187,11 +264,19 @@ app.post('/register', async (req: Request, res: Response) => {
       email: cleanEmail,
       password_hash: passwordHash,
       name: cleanName,
+      auth_provider: 'local',
+      avatar_url: null,
       created_at: new Date().toISOString(),
     };
     inMemoryUsers.push(newUser);
 
-    const userPayload = { id: newUser.id, email: newUser.email, name: newUser.name };
+    const userPayload = {
+      id: newUser.id,
+      email: newUser.email,
+      name: newUser.name,
+      auth_provider: 'local',
+      avatar_url: null,
+    };
     const token = signToken(userPayload);
 
     return res.status(201).json({
@@ -228,9 +313,7 @@ app.post('/login', async (req: Request, res: Response) => {
         if (result.rows.length > 0) {
           const row = result.rows[0];
           if (!row.password_hash) {
-            return res.status(401).json({
-              error: 'Esta cuenta se registró con Google. Por favor inicia sesión usando el botón "Continuar con Google".',
-            });
+            return res.status(401).json({ error: GOOGLE_ONLY_LOGIN_ERROR });
           }
           const isValid = await bcrypt.compare(String(password), row.password_hash);
           if (!isValid) {
@@ -251,19 +334,23 @@ app.post('/login', async (req: Request, res: Response) => {
           });
         }
       } catch (dbErr: any) {
-        console.warn('[auth-service] Error consultando usuario en PostgreSQL, probando fallback en memoria:', dbErr.message);
+        console.warn(
+          '[auth-service] Error consultando usuario en PostgreSQL, probando fallback en memoria:',
+          dbErr.message
+        );
       }
     }
 
     // 2. Fallback en memoria (incluye demo@flyway.cl / flyway123)
     const memUser = inMemoryUsers.find((u) => u.email.toLowerCase() === cleanEmail);
     if (!memUser) {
+      if (isGmailAddress(cleanEmail)) {
+        return res.status(401).json({ error: UNREGISTERED_GMAIL_LOGIN_ERROR });
+      }
       return res.status(401).json({ error: 'Credenciales inválidas.' });
     }
     if (!memUser.password_hash) {
-      return res.status(401).json({
-        error: 'Esta cuenta se registró con Google. Por favor inicia sesión usando el botón "Continuar con Google".',
-      });
+      return res.status(401).json({ error: GOOGLE_ONLY_LOGIN_ERROR });
     }
 
     const validPassword = await bcrypt.compare(String(password), memUser.password_hash);
@@ -296,19 +383,36 @@ app.post('/login', async (req: Request, res: Response) => {
 // -------------------------------------------------------------
 app.post('/google', async (req: Request, res: Response) => {
   try {
-    const { credential, email: fallbackEmail, name: fallbackName, avatar_url: fallbackAvatar } = req.body || {};
+    const {
+      credential,
+      accessToken: bodyAccessToken,
+      access_token: snakeAccessToken,
+      email: fallbackEmail,
+      name: fallbackName,
+      avatar_url: fallbackAvatar,
+      devMock,
+    } = req.body || {};
 
-    let email = '';
-    let name = '';
+    const clientId = getGoogleClientId();
+    const rawAccessToken =
+      typeof bodyAccessToken === 'string' && bodyAccessToken.trim()
+        ? bodyAccessToken.trim()
+        : typeof snakeAccessToken === 'string' && snakeAccessToken.trim()
+        ? snakeAccessToken.trim()
+        : '';
+
+    let rawEmail = '';
+    let rawName = '';
     let avatar_url: string | null = null;
 
-    if (credential && typeof credential === 'string') {
+    if (credential && typeof credential === 'string' && credential.trim()) {
+      // 1. Google ID Token JWT (One Tap / Official GIS Button)
       try {
-        const verifyOptions: { idToken: string; audience?: string } = { idToken: credential };
-        if (GOOGLE_CLIENT_ID) {
-          verifyOptions.audience = GOOGLE_CLIENT_ID;
-        }
-        const ticket = await googleClient.verifyIdToken(verifyOptions);
+        const oauthClient = new OAuth2Client(clientId || undefined);
+        const ticket = await oauthClient.verifyIdToken({
+          idToken: credential.trim(),
+          audience: clientId || undefined,
+        });
         const payload = ticket.getPayload();
         if (!payload || !payload.email) {
           return res.status(401).json({ error: 'El token de Google no contiene un correo válido.' });
@@ -316,51 +420,133 @@ app.post('/google', async (req: Request, res: Response) => {
         if (payload.email_verified === false) {
           return res.status(401).json({ error: 'Tu correo de Google no está verificado.' });
         }
-        email = payload.email.trim().toLowerCase();
-        name = (payload.name || email.split('@')[0]).trim();
+        rawEmail = payload.email;
+        rawName = payload.name || '';
         avatar_url = payload.picture || null;
       } catch (verifyErr: any) {
         console.error('[auth-service] Error verificando Google ID Token:', verifyErr.message);
-        return res.status(401).json({ error: 'Token de Google inválido o expirado.', detail: verifyErr.message });
+        return res
+          .status(401)
+          .json({ error: 'Token de Google inválido o expirado.', detail: verifyErr.message });
       }
-    } else if (fallbackEmail && typeof fallbackEmail === 'string' && fallbackEmail.includes('@')) {
-      // Modo desarrollo / demo interactivo cuando GOOGLE_CLIENT_ID aún no está configurado en el entorno local
-      email = fallbackEmail.trim().toLowerCase();
-      name = (fallbackName && typeof fallbackName === 'string' && fallbackName.trim())
-        ? fallbackName.trim()
-        : email.split('@')[0];
-      avatar_url = typeof fallbackAvatar === 'string' ? fallbackAvatar : null;
+    } else if (rawAccessToken) {
+      // 2. Google OAuth 2.0 Access Token (Popup initTokenClient)
+      try {
+        const tokenInfoRes = await fetchWithTimeout(
+          `https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(rawAccessToken)}`
+        );
+        if (!tokenInfoRes.ok) {
+          return res.status(401).json({ error: 'Token de acceso de Google inválido o expirado.' });
+        }
+        const tokenInfo = (await tokenInfoRes.json()) as {
+          aud?: string;
+          azp?: string;
+          sub?: string;
+          email?: string;
+          email_verified?: string | boolean;
+        };
+
+        if (clientId && tokenInfo.aud !== clientId && tokenInfo.azp !== clientId) {
+          return res.status(401).json({
+            error: 'El token de Google no corresponde a esta aplicación (audience mismatch).',
+          });
+        }
+
+        const userInfoRes = await fetchWithTimeout(
+          'https://www.googleapis.com/oauth2/v3/userinfo',
+          {
+            headers: {
+              Authorization: `Bearer ${rawAccessToken}`,
+            },
+          }
+        );
+        if (!userInfoRes.ok) {
+          return res
+            .status(401)
+            .json({ error: 'No se pudo obtener el perfil de usuario desde Google.' });
+        }
+        const userInfo = (await userInfoRes.json()) as {
+          sub?: string;
+          email?: string;
+          email_verified?: boolean | string;
+          name?: string;
+          picture?: string;
+        };
+
+        if (!userInfo || typeof userInfo.email !== 'string' || !userInfo.email.trim()) {
+          return res.status(401).json({ error: 'El token de Google no contiene un correo válido.' });
+        }
+        if (userInfo.email_verified === false || userInfo.email_verified === 'false') {
+          return res.status(401).json({ error: 'Tu correo de Google no está verificado.' });
+        }
+
+        rawEmail = userInfo.email;
+        rawName = typeof userInfo.name === 'string' ? userInfo.name : '';
+        avatar_url = typeof userInfo.picture === 'string' && userInfo.picture ? userInfo.picture : null;
+      } catch (verifyErr: any) {
+        console.error('[auth-service] Error verificando Google Access Token:', verifyErr.message);
+        if (verifyErr?.name === 'AbortError') {
+          return res
+            .status(504)
+            .json({ error: 'Tiempo de espera agotado al verificar la sesión con Google.' });
+        }
+        return res
+          .status(401)
+          .json({ error: 'No se pudo validar el token de Google OAuth 2.0.', detail: verifyErr.message });
+      }
     } else {
-      return res.status(400).json({ error: 'Se requiere la credencial de Google (credential).' });
+      // 4. Security guard contra payloads sin token verificado
+      if (process.env.NODE_ENV === 'production' || Boolean(clientId)) {
+        return res.status(400).json({
+          error: 'Se requiere un token válido de Google OAuth 2.0 (credential o accessToken).',
+        });
+      }
+      if (devMock === true && typeof fallbackEmail === 'string' && fallbackEmail.includes('@')) {
+        rawEmail = fallbackEmail;
+        rawName = typeof fallbackName === 'string' ? fallbackName : '';
+        avatar_url = typeof fallbackAvatar === 'string' ? fallbackAvatar : null;
+      } else {
+        return res.status(400).json({
+          error: 'Se requiere un token válido de Google OAuth 2.0 (credential o accessToken).',
+        });
+      }
     }
 
-    // 1. Upsert en PostgreSQL si está disponible
+    const email = rawEmail.trim().toLowerCase();
+    const cleanProvidedName = rawName.trim();
+    const displayName = (cleanProvidedName || email.split('@')[0]).trim();
+
+    // 3. Upsert & Sign-In en PostgreSQL si está disponible
     if (await checkDbConnection()) {
       try {
         const existing = await pool.query(
-          'SELECT id, email, name, auth_provider, avatar_url FROM users WHERE LOWER(email) = $1 LIMIT 1',
+          'SELECT id, email, password_hash, name, auth_provider, avatar_url FROM users WHERE LOWER(email) = $1 LIMIT 1',
           [email]
         );
 
         let row: any;
+        let isNewUser = false;
+
         if (existing.rows.length > 0) {
+          isNewUser = false;
           const current = existing.rows[0];
-          const updatedAvatar = avatar_url || current.avatar_url || null;
           const updateRes = await pool.query(
             `UPDATE users
-             SET avatar_url = $1,
-                 name = COALESCE(NULLIF($2, ''), name)
+             SET name = COALESCE(NULLIF($1, ''), name),
+                 avatar_url = COALESCE($2, avatar_url),
+                 auth_provider = CASE WHEN password_hash IS NULL THEN 'google' ELSE auth_provider END
              WHERE id = $3
-             RETURNING id, email, name, auth_provider, avatar_url`,
-            [updatedAvatar, name, current.id]
+             RETURNING id, email, name, auth_provider, avatar_url, created_at`,
+            [cleanProvidedName, avatar_url, current.id]
           );
           row = updateRes.rows[0];
         } else {
+          isNewUser = true;
           const insertRes = await pool.query(
-            `INSERT INTO users (email, password_hash, name, auth_provider, avatar_url, created_at)
-             VALUES ($1, NULL, $2, 'google', $3, NOW())
-             RETURNING id, email, name, auth_provider, avatar_url`,
-            [email, name, avatar_url]
+            `INSERT INTO users (email, password_hash, name, auth_provider, avatar_url)
+             VALUES ($1, NULL, $2, 'google', $3)
+             RETURNING id, email, name, auth_provider, avatar_url, created_at`,
+            [email, displayName, avatar_url]
           );
           row = insertRes.rows[0];
         }
@@ -374,8 +560,12 @@ app.post('/google', async (req: Request, res: Response) => {
         };
         const token = signToken(user);
 
-        return res.json({
+        return res.status(200).json({
+          message: isNewUser
+            ? 'Cuenta registrada exitosamente con Google'
+            : 'Inicio de sesión con Google exitoso',
           token,
+          isNewUser,
           user,
           source: 'database',
         });
@@ -384,21 +574,33 @@ app.post('/google', async (req: Request, res: Response) => {
       }
     }
 
-    // 2. Fallback en memoria
+    // Fallback resiliente en memoria
     let memUser = inMemoryUsers.find((u) => u.email.toLowerCase() === email);
+    let isNewUser = false;
+
     if (!memUser) {
+      isNewUser = true;
       memUser = {
         id: nextInMemoryId++,
         email,
         password_hash: null,
-        name,
+        name: displayName,
         auth_provider: 'google',
         avatar_url,
         created_at: new Date().toISOString(),
       };
       inMemoryUsers.push(memUser);
-    } else if (avatar_url) {
-      memUser.avatar_url = avatar_url;
+    } else {
+      isNewUser = false;
+      if (cleanProvidedName) {
+        memUser.name = cleanProvidedName;
+      }
+      if (avatar_url) {
+        memUser.avatar_url = avatar_url;
+      }
+      if (!memUser.password_hash) {
+        memUser.auth_provider = 'google';
+      }
     }
 
     const userPayload = {
@@ -410,8 +612,12 @@ app.post('/google', async (req: Request, res: Response) => {
     };
     const token = signToken(userPayload);
 
-    return res.json({
+    return res.status(200).json({
+      message: isNewUser
+        ? 'Cuenta registrada exitosamente con Google'
+        : 'Inicio de sesión con Google exitoso',
       token,
+      isNewUser,
       user: userPayload,
       source: 'in_memory',
     });
@@ -450,7 +656,7 @@ function handleVerify(req: Request, res: Response) {
       user,
       ...user,
     });
-  } catch (err: any) {
+  } catch {
     return res.status(401).json({ error: 'Token inválido o expirado.' });
   }
 }
@@ -458,6 +664,10 @@ function handleVerify(req: Request, res: Response) {
 app.get('/me', handleVerify);
 app.post('/verify', handleVerify);
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🔐 Auth Service corriendo en http://0.0.0.0:${PORT}`);
-});
+export { app, pool };
+
+if (process.env.AUTH_SERVICE_SKIP_LISTEN !== 'true') {
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🔐 Auth Service corriendo en http://0.0.0.0:${PORT}`);
+  });
+}

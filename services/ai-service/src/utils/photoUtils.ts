@@ -822,6 +822,15 @@ export const INSPIRATION_PEXELS_CARDS = [
 ];
 
 /**
+ * Validates whether a candidate value is a clean http(s) URL.
+ */
+export function isValidHttpUrl(url?: unknown): url is string {
+  if (typeof url !== 'string') return false;
+  const trimmed = url.trim();
+  return /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(trimmed);
+}
+
+/**
  * Detects destination key from a text string (accent-insensitive)
  */
 export function getDestinationKey(destination = ''): string {
@@ -830,10 +839,10 @@ export function getDestinationKey(destination = ''): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
 
-  if (lower.includes('atacama') || lower.includes('san pedro') || lower.includes('calama') || lower.includes('elqui') || lower.includes('serena') || lower.includes('iquique')) return 'atacama';
+  if (lower.includes('atacama') || lower.includes('san pedro') || lower.includes('calama')) return 'atacama';
   if (lower.includes('paine') || lower.includes('patagonia') || lower.includes('natales') || lower.includes('arenas') || lower.includes('aysen') || lower.includes('coyhaique')) return 'torres';
   if (lower.includes('chiloe') || lower.includes('castro') || lower.includes('ancud') || lower.includes('dalcahue')) return 'chiloe';
-  if (lower.includes('pucon') || lower.includes('villarrica') || lower.includes('caburgua') || lower.includes('varas') || lower.includes('frutillar') || lower.includes('osorno')) return 'pucon';
+  if (lower.includes('pucon') || lower.includes('villarrica') || lower.includes('caburgua')) return 'pucon';
   if (lower.includes('valdivia') || lower.includes('corral') || lower.includes('niebla')) return 'valdivia';
   if (lower.includes('santiago') || lower.includes('bellavista') || lower.includes('cristobal') || lower.includes('providencia') || lower.includes('las condes') || lower.includes('maipo')) return 'santiago';
   if (lower.includes('cusco') || lower.includes('peru') || lower.includes('machu') || lower.includes('lima')) return 'cusco';
@@ -843,17 +852,18 @@ export function getDestinationKey(destination = ''): string {
   if (lower.includes('londres') || lower.includes('inglaterra') || lower.includes('london')) return 'londres';
   if (lower.includes('roma') || lower.includes('italia') || lower.includes('italy') || lower.includes('florencia') || lower.includes('venecia')) return 'roma';
   if (lower.includes('nueva york') || lower.includes('new york') || lower.includes('manhattan')) return 'nueva_york';
-  if (lower.includes('cancun') || lower.includes('caribe')) return 'cancun';
+  if (lower.includes('cancun') || lower.includes('caribe') || lower.includes('riviera maya')) return 'cancun';
   if (lower.includes('noruega') || lower.includes('oslo') || lower.includes('bergen') || lower.includes('tromso') || lower.includes('norway')) return 'noruega';
   if (lower.includes('rusia') || lower.includes('moscu') || lower.includes('san petersburgo') || lower.includes('russia')) return 'rusia';
   if (lower.includes('polo sur') || lower.includes('antartica') || lower.includes('antartida') || lower.includes('south pole')) return 'polo_sur';
   if (lower.includes('buenos aires') || lower.includes('argentina') || lower.includes('palermo')) return 'buenos_aires';
-  if (lower.includes('valparaiso') || lower.includes('valpo') || lower.includes('vina') || lower.includes('concon')) return 'valparaiso';
+  if (lower.includes('valparaiso') || lower.includes('valpo') || lower.includes('vina del mar') || lower.includes('concon') || lower.includes('renaca')) return 'valparaiso';
   return 'neutral_travel';
 }
 
 /**
- * Returns a guaranteed Pexels photo for a destination
+ * Returns a guaranteed Pexels photo for a destination (used by local offline fallback engine).
+ * Never falls back to Valparaíso unless the destination itself is Valparaíso.
  */
 export function getPexelsPhotoForDestination(
   destination = '',
@@ -861,7 +871,7 @@ export function getPexelsPhotoForDestination(
   usedUrls?: Set<string>
 ): PexelsPhotoMeta {
   const key = getDestinationKey(destination);
-  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.neutral_travel || PEXELS_DESTINATION_PHOTOS.valparaiso;
+  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.neutral_travel;
 
   if (usedUrls) {
     const available = list.find((p) => !usedUrls.has(p.url));
@@ -877,7 +887,7 @@ export function getPexelsPhotoForDestination(
 }
 
 /**
- * Returns a guaranteed Pexels photo for a day in an itinerary, ensuring uniqueness
+ * Returns a guaranteed Pexels photo for a day in an itinerary, preserving any valid http(s) URL.
  */
 export function getPexelsPhotoForDay(
   day: Partial<TripDay>,
@@ -885,10 +895,11 @@ export function getPexelsPhotoForDay(
   dayIndex = 0,
   usedUrls?: Set<string>
 ): PexelsPhotoMeta {
-  if (day.imageUrl && day.imageUrl.includes('pexels.com') && (!usedUrls || !usedUrls.has(day.imageUrl))) {
-    if (usedUrls) usedUrls.add(day.imageUrl);
+  if (isValidHttpUrl(day.imageUrl) && (!usedUrls || !usedUrls.has(day.imageUrl.trim()))) {
+    const cleanUrl = day.imageUrl.trim();
+    if (usedUrls) usedUrls.add(cleanUrl);
     return {
-      url: day.imageUrl,
+      url: cleanUrl,
       alt: day.title || `Día ${day.dayNumber || dayIndex + 1}`,
       photographer: day.imagePhotographer || 'Pexels Contributor',
       photographerUrl: day.imagePhotographerUrl || 'https://www.pexels.com',
@@ -896,7 +907,7 @@ export function getPexelsPhotoForDay(
   }
 
   const key = getDestinationKey(destination);
-  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.neutral_travel || PEXELS_DESTINATION_PHOTOS.valparaiso;
+  const list = PEXELS_DESTINATION_PHOTOS[key] || PEXELS_DESTINATION_PHOTOS.neutral_travel;
 
   if (usedUrls) {
     const available = list.find((p) => !usedUrls.has(p.url));
@@ -913,6 +924,7 @@ export function getPexelsPhotoForDay(
 
 /**
  * Returns a unique Pexels photo matching the destination and the suggested place/activity.
+ * Preserves any valid http(s) URL and never leaks Valparaíso photos into other destinations.
  */
 export function getPexelsPhotoForActivity(
   activity: Partial<Activity>,
@@ -922,11 +934,15 @@ export function getPexelsPhotoForActivity(
 ): PexelsPhotoMeta {
   const activeUsed = usedUrls || new Set<string>();
   const destKey = getDestinationKey(destination);
-  const destPool = PEXELS_DESTINATION_PHOTOS[destKey] || PEXELS_DESTINATION_PHOTOS.valparaiso;
+  const destPool = PEXELS_DESTINATION_PHOTOS[destKey] || PEXELS_DESTINATION_PHOTOS.neutral_travel;
+  const valparaisoOnlyUrls =
+    destKey === 'valparaiso'
+      ? new Set<string>()
+      : new Set(PEXELS_DESTINATION_PHOTOS.valparaiso.map((p) => p.url));
 
-  // Helper to test an image pool
+  // Helper to test an image pool without cross-city Valparaíso leakage
   const pickFromPool = (pool: PexelsPhotoMeta[]): PexelsPhotoMeta | null => {
-    const candidate = pool.find((p) => !activeUsed.has(p.url));
+    const candidate = pool.find((p) => !activeUsed.has(p.url) && !valparaisoOnlyUrls.has(p.url));
     if (candidate) {
       activeUsed.add(candidate.url);
       return candidate;
@@ -934,12 +950,13 @@ export function getPexelsPhotoForActivity(
     return null;
   };
 
-  // If activity already has a valid Pexels image and it has not yet been used
-  if (activity.imageUrl && activity.imageUrl.includes('pexels.com') && !activeUsed.has(activity.imageUrl)) {
-    activeUsed.add(activity.imageUrl);
+  // Preserve any valid http(s) image URL if not yet used
+  if (isValidHttpUrl(activity.imageUrl) && !activeUsed.has(activity.imageUrl.trim())) {
+    const cleanUrl = activity.imageUrl.trim();
+    activeUsed.add(cleanUrl);
     return {
-      url: activity.imageUrl,
-      alt: activity.title || 'Actividad en Pexels',
+      url: cleanUrl,
+      alt: activity.title || 'Actividad',
       photographer: activity.imagePhotographer || 'Pexels Contributor',
       photographerUrl: activity.imagePhotographerUrl || 'https://www.pexels.com',
     };
@@ -1015,24 +1032,110 @@ export function getPexelsPhotoForActivity(
 }
 
 /**
- * Enriches an entire Trip so that every Day and every Activity has a verified Pexels photo
- * matching the trip destination.
+ * Normalizes photo fields for a Trip:
+ * - For cloud-generated trips (sourceEngine !== 'offline_local'), preserves any valid http(s) imageUrl
+ *   without stamping static Valparaíso/generic photos onto missing fields, allowing BFF + catalog-service
+ *   (enrichTripWithPexels) to inject live Pexels API photos per destination and placeName cleanly.
+ * - For offline_local fallback trips, guarantees non-empty destination-matched Pexels URLs on hero, days, and activities.
  */
 export function ensureTripHasPexelsPhotos(trip: Trip): Trip {
   const dest = trip.destination || 'Santiago, Chile';
+  const isCloudTrip = Boolean(trip.sourceEngine && trip.sourceEngine !== 'offline_local');
+
+  if (isCloudTrip) {
+    const heroUrl = isValidHttpUrl(trip.imageUrl) ? trip.imageUrl.trim() : undefined;
+    const photoUrl = isValidHttpUrl(trip.photoUrl) ? trip.photoUrl.trim() : heroUrl;
+
+    return {
+      ...trip,
+      imageUrl: heroUrl,
+      photoUrl,
+      imagePhotographer: heroUrl ? trip.imagePhotographer : undefined,
+      imagePhotographerUrl: heroUrl && isValidHttpUrl(trip.imagePhotographerUrl) ? trip.imagePhotographerUrl.trim() : undefined,
+      days: (trip.days || []).map((day) => {
+        const dayUrl = isValidHttpUrl(day.imageUrl) ? day.imageUrl.trim() : undefined;
+        const normalizedItems = (day.items || []).map((item) => {
+          if (item.type === 'activity' && item.data) {
+            const actUrl = isValidHttpUrl(item.data.imageUrl) ? item.data.imageUrl.trim() : undefined;
+            return {
+              ...item,
+              data: {
+                ...item.data,
+                imageUrl: actUrl,
+                imagePhotographer: actUrl ? item.data.imagePhotographer : undefined,
+                imagePhotographerUrl:
+                  actUrl && isValidHttpUrl(item.data.imagePhotographerUrl)
+                    ? item.data.imagePhotographerUrl.trim()
+                    : undefined,
+              },
+            };
+          }
+          return item;
+        });
+
+        const syncedActivities = normalizedItems
+          .filter((it): it is { type: 'activity'; data: Activity } => it.type === 'activity' && Boolean(it.data))
+          .map((it) => it.data);
+
+        return {
+          ...day,
+          title: day.title || `Día ${day.dayNumber}: Lo mejor de ${dest}`,
+          summary: day.summary || `Jornada diseñada con lugares emblemáticos, gastronomía real y miradores de ${dest}.`,
+          imageUrl: dayUrl,
+          imagePhotographer: dayUrl ? day.imagePhotographer : undefined,
+          imagePhotographerUrl: dayUrl && isValidHttpUrl(day.imagePhotographerUrl) ? day.imagePhotographerUrl.trim() : undefined,
+          activities: syncedActivities,
+          items: normalizedItems,
+        };
+      }),
+    };
+  }
+
   const usedUrls = new Set<string>();
 
-  // 1. Trip Hero photo
-  const heroPhoto = getPexelsPhotoForDestination(dest, 0, usedUrls);
+  // 1. Offline Trip Hero photo (preserve valid http(s) URL if present, else pick from destination pool)
+  const heroPhoto: PexelsPhotoMeta = isValidHttpUrl(trip.imageUrl)
+    ? (() => {
+        const cleanHero = trip.imageUrl.trim();
+        usedUrls.add(cleanHero);
+        return {
+          url: cleanHero,
+          alt: trip.title || dest,
+          photographer: trip.imagePhotographer || 'Pexels Contributor',
+          photographerUrl: trip.imagePhotographerUrl || 'https://www.pexels.com',
+        };
+      })()
+    : getPexelsPhotoForDestination(dest, 0, usedUrls);
 
   const enrichedTrip: Trip = {
     ...trip,
     imageUrl: heroPhoto.url,
+    photoUrl: isValidHttpUrl(trip.photoUrl) ? trip.photoUrl.trim() : heroPhoto.url,
     imagePhotographer: trip.imagePhotographer || heroPhoto.photographer,
     imagePhotographerUrl: trip.imagePhotographerUrl || heroPhoto.photographerUrl,
     days: (trip.days || []).map((day, dIdx) => {
       // 2. Day Hero photo (unique for each day, matching destination)
       const dayPhoto = getPexelsPhotoForDay(day, dest, dIdx, usedUrls);
+      const updatedItems = (day.items || []).map((item, iIdx) => {
+        if (item.type === 'activity' && item.data) {
+          const actPhoto = getPexelsPhotoForActivity(item.data, dest, usedUrls, dIdx * 4 + iIdx);
+
+          return {
+            ...item,
+            data: {
+              ...item.data,
+              imageUrl: actPhoto.url,
+              imagePhotographer: actPhoto.photographer,
+              imagePhotographerUrl: actPhoto.photographerUrl,
+            },
+          };
+        }
+        return item;
+      });
+
+      const syncedActivities = updatedItems
+        .filter((it): it is { type: 'activity'; data: Activity } => it.type === 'activity' && Boolean(it.data))
+        .map((it) => it.data);
 
       return {
         ...day,
@@ -1041,22 +1144,8 @@ export function ensureTripHasPexelsPhotos(trip: Trip): Trip {
         imageUrl: dayPhoto.url,
         imagePhotographer: dayPhoto.photographer,
         imagePhotographerUrl: dayPhoto.photographerUrl,
-        items: (day.items || []).map((item, iIdx) => {
-          if (item.type === 'activity' && item.data) {
-            const actPhoto = getPexelsPhotoForActivity(item.data, dest, usedUrls, dIdx * 4 + iIdx);
-
-            return {
-              ...item,
-              data: {
-                ...item.data,
-                imageUrl: actPhoto.url,
-                imagePhotographer: actPhoto.photographer,
-                imagePhotographerUrl: actPhoto.photographerUrl,
-              },
-            };
-          }
-          return item;
-        }),
+        activities: syncedActivities,
+        items: updatedItems,
       };
     }),
   };

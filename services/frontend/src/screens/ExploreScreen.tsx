@@ -106,12 +106,13 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
   });
 
   useEffect(() => {
-    if (!destination.trim()) {
+    const trimmedDest = destination.trim();
+    if (!trimmedDest) {
       setPreviewPhoto(null);
       return;
     }
 
-    // Immediate local destination-accurate photo so it never lags or mismatches
+    // Immediate local destination-accurate placeholder photo so it never lags or flashes blank
     const localPhoto = selectedComuna?.imageUrl
       ? {
           url: selectedComuna.imageUrl,
@@ -125,7 +126,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
           photographerUrl: 'https://www.pexels.com',
         }
       : (() => {
-          const fallback = getPexelsPhotoForDestination(destination, 0);
+          const fallback = getPexelsPhotoForDestination(trimmedDest, 0);
           return {
             url: fallback.url,
             photographer: fallback.photographer,
@@ -135,24 +136,45 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
 
     setPreviewPhoto(localPhoto);
 
-    // If not in static catalog, also query backend Pexels API
-    if (!currentDest && destination.trim().length >= 3) {
+    // Query live Pexels via BFF whenever destination has >= 3 characters, cancelling stale requests
+    if (trimmedDest.length >= 3) {
+      let isCancelled = false;
+      const controller = new AbortController();
+
       const timer = setTimeout(async () => {
         try {
           const bffUrl = getBffUrl();
-          const res = await fetch(`${bffUrl}/photos?query=${encodeURIComponent(destination.trim())}&count=1`);
-          if (res.ok) {
+          const encodedDest = encodeURIComponent(trimmedDest);
+          const res = await fetch(
+            `${bffUrl}/photos?destination=${encodedDest}&query=${encodedDest}&count=1`,
+            {
+              cache: 'no-store',
+              signal: controller.signal,
+            }
+          );
+          if (res.ok && !isCancelled) {
             const data = await res.json();
-            if (data.photos && data.photos.length > 0) {
-              setPreviewPhoto(data.photos[0]);
+            const candidate = data?.photos?.[0] || data?.photo;
+            const resolvedUrl = candidate?.url || candidate?.src?.large2x || candidate?.src?.large;
+            if (!isCancelled && typeof resolvedUrl === 'string' && /^https?:\/\/.+/i.test(resolvedUrl)) {
+              setPreviewPhoto({
+                url: resolvedUrl,
+                photographer: candidate.photographer || 'Pexels',
+                photographerUrl:
+                  candidate.photographerUrl || candidate.photographer_url || 'https://www.pexels.com',
+              });
             }
           }
         } catch {
-          // Keep verified local fallback
+          // Keep verified local placeholder on abort or offline network error
         }
-      }, 400);
+      }, 320);
 
-      return () => clearTimeout(timer);
+      return () => {
+        isCancelled = true;
+        clearTimeout(timer);
+        controller.abort();
+      };
     }
   }, [destination, currentDest?.id, selectedComuna?.name]);
 
@@ -393,6 +415,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
           <div className="mb-3.5 rounded-xl overflow-hidden border border-[var(--fw-border)] bg-[#FAF8F5] transition-all animate-fadeIn shadow-2xs">
             <div className="relative h-36 sm:h-44 w-full overflow-hidden bg-[#F1ECE2]">
               <img
+                key={previewPhoto.url}
                 src={previewPhoto.url}
                 alt={destination}
                 className="w-full h-full object-cover"

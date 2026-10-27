@@ -190,6 +190,7 @@ export default function App() {
         fetch(`${bffUrl}/itinerary/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
           body: JSON.stringify(formData),
         }),
         liveWeatherPromise,
@@ -222,6 +223,7 @@ export default function App() {
 
         const enrichedTrip = ensureTripHasPexelsPhotos({
           ...rawTripObj,
+          id: `${rawTripObj.id || 'trip'}-${Date.now()}`,
           season: useLivePriority ? weatherInfo.season : rawTripObj.season || weatherInfo.season,
           currentSeason: useLivePriority
             ? weatherInfo.currentSeason
@@ -277,6 +279,7 @@ export default function App() {
           interests: formData.interests,
         });
 
+        fallbackTrip.id = `${fallbackTrip.id || 'trip'}-${Date.now()}`;
         fallbackTrip.season = liveWeather.season;
         fallbackTrip.currentSeason = liveWeather.currentSeason;
         fallbackTrip.weatherCondition = liveWeather.weatherCondition;
@@ -397,6 +400,7 @@ export default function App() {
 
             {activeScreen === 'itinerary' && (
               <ItineraryScreen
+                key={currentTrip.id}
                 trip={currentTrip}
                 onBack={() => setActiveScreen('explore')}
                 onSaveTrip={handleSaveTrip}

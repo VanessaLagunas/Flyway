@@ -1,15 +1,15 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { Trip, BudgetLevel, SourceEngine } from './types';
+import { Trip, Activity, BudgetLevel, SourceEngine } from './types';
 import { generateSmartTrip, inferDestinationMetadata } from './utils/tripGenerator';
-import { ensureTripHasPexelsPhotos } from './utils/photoUtils';
+import { ensureTripHasPexelsPhotos, isValidHttpUrl } from './utils/photoUtils';
 import {
   getWeatherAndClothingForTrip,
   fetchWeatherAndClothingForTrip,
   WeatherAndClothingInfo,
   getBudgetTierInfo,
 } from './utils/weatherUtils';
-import { DESTINATIONS_CATALOG } from './data/destinationsData';
+import { DESTINATIONS_CATALOG, DestinationInfo } from './data/destinationsData';
 
 dotenv.config();
 dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
@@ -107,8 +107,89 @@ function formatDateSpanish(isoDate: string, dayOffset = 0): string {
 }
 
 /**
+ * Derives a clean official place name from rawPlaceName or by stripping generic action prefixes from title.
+ */
+export function deriveCleanPlaceName(
+  rawPlaceName: unknown,
+  title: string,
+  fallbackDestination?: string
+): string {
+  if (typeof rawPlaceName === 'string' && rawPlaceName.trim().length > 0) {
+    return rawPlaceName.trim();
+  }
+
+  let cleaned = String(title || '').trim();
+  const exactPrefixRegex =
+    /^(almuerzo|cena|desayuno|once|brunch|visita|recorrido|paseo|tour|mañana|tarde|noche|exploración|sendero|trekking)\s+(en|por|a|al|de|del|hacia)\s+/i;
+  const extendedPrefixRegex =
+    /^(?:almuerzo|cena|desayuno|once|brunch|visita|recorrido|paseo|tour|mañana|manana|tarde|noche|exploración|exploracion|sendero|trekking|caminata|degustación|degustacion|parada)(?:\s+(?:de\s+autor|marino|marina|típico|típica|tipico|tipica|tradicional|criollo|criolla|campestre|guiado|guiada|matutino|matutina|nocturno|nocturna|panorámico|panorámica|cultural|gastronómico|gastronómica|patrimonial|peatonal|local))?\s+(?:en|por|a|al|de|del|hacia)\s+/i;
+
+  cleaned = cleaned.replace(exactPrefixRegex, '').replace(extendedPrefixRegex, '').trim();
+
+  if (cleaned.length > 0) {
+    return cleaned;
+  }
+  return String(title || fallbackDestination || 'Lugar destacado').trim();
+}
+
+/**
+ * Validates WGS84 coordinates, rejecting non-finite numbers, out-of-bounds values, and (0, 0).
+ */
+export function normalizeCoordinates(rawCoords: any): { lat: number; lng: number } | undefined {
+  if (!rawCoords || typeof rawCoords !== 'object') return undefined;
+  const rawLat = rawCoords.lat ?? rawCoords.latitude;
+  const rawLng = rawCoords.lng ?? rawCoords.lon ?? rawCoords.longitude;
+  if (
+    rawLat === undefined ||
+    rawLat === null ||
+    rawLat === '' ||
+    typeof rawLat === 'boolean' ||
+    rawLng === undefined ||
+    rawLng === null ||
+    rawLng === '' ||
+    typeof rawLng === 'boolean'
+  ) {
+    return undefined;
+  }
+  const lat = Number(rawLat);
+  const lng = Number(rawLng);
+  if (
+    !Number.isFinite(lat) ||
+    !Number.isFinite(lng) ||
+    lat < -90 ||
+    lat > 90 ||
+    lng < -180 ||
+    lng > 180 ||
+    (lat === 0 && lng === 0)
+  ) {
+    return undefined;
+  }
+  return { lat, lng };
+}
+
+/**
+ * Builds an exact Google Maps query string when missing.
+ */
+function buildActivityMapQuery(
+  rawMapQuery: unknown,
+  placeName: string,
+  addressOrSector: string | undefined,
+  cleanDestination: string,
+  resolvedCountry: string
+): string {
+  if (typeof rawMapQuery === 'string' && rawMapQuery.trim().length > 0) {
+    return rawMapQuery.trim();
+  }
+  const countrySuffix =
+    resolvedCountry && resolvedCountry.trim() && resolvedCountry.trim().toLowerCase() !== 'internacional'
+      ? `, ${resolvedCountry.trim()}`
+      : '';
+  return `${placeName}, ${addressOrSector ? `${addressOrSector}, ` : ''}${cleanDestination}${countrySuffix}`;
+}
+
+/**
  * Builds the AI prompt requesting the Unified Output Contract in CLP
- * including destination-accurate weather & clothing guidance.
+ * including destination-accurate weather & clothing guidance and strict venue specificity.
  */
 export function buildPrompt(
   input: PlanRouteInput,
@@ -117,16 +198,16 @@ export function buildPrompt(
   weatherHint: WeatherAndClothingInfo
 ): string {
   const budgetLabels: Record<BudgetLevel, string> = {
-    budget: 'Económico (mochilero / bajo costo, transporte público, picadas locales)',
-    standard: 'Presupuesto Medio (restaurantes locales de calidad, museos y experiencias)',
-    premium: 'Premium (gastronomía de autor, hoteles boutique, experiencias exclusivas)',
+    budget: 'Económico (mochilero / bajo costo, transporte público, picadas locales con nombre propio)',
+    standard: 'Presupuesto Medio (restaurantes locales reconocidos, museos y parques emblemáticos)',
+    premium: 'Premium (gastronomía de autor reconocida, hoteles boutique, reservas y experiencias exclusivas)',
   };
 
   const interestsText = input.interests.length > 0
     ? input.interests.join(', ')
     : 'cultura, gastronomía, naturaleza';
 
-  return `Actúa como un experto en planificación turística y meteorología de viajes para ${input.destination} (${isChile ? 'Chile 🇨🇱' : 'Destino Internacional'}).
+  return `Actúa como un guía local experto en planificación turística georreferenciada y meteorología de viajes para ${input.destination} (${isChile ? 'Chile 🇨🇱' : 'Destino Internacional'}).
 Genera un itinerario estructurado en JSON para ${daysCount} días (${input.startDate} a ${input.endDate}) con todos los costos expresados en pesos chilenos (CLP).
 - Presupuesto: ${budgetLabels[input.budget]}
 - Intereses: ${interestsText}
@@ -136,7 +217,7 @@ REGLAS ESENCIALES:
 1. Responde ÚNICAMENTE con un objeto JSON válido, sin texto fuera del JSON.
 2. Incluye en la raíz del JSON la metadata del destino para persistencia en catálogo PostgreSQL:
    - "destination": nombre limpio del destino (ej. "Pucón" o "Oslo, Noruega")
-   - "country": país real del destino (ej. "Chile", "Noruega", "Rusia")
+   - "country": país real del destino (ej. "Chile", "Noruega", "Perú")
    - "region": región o estado correspondiente
    - "commune": comuna, ciudad o sector principal
    - "avgDailyCostCLP": número entero con el costo diario promedio por persona en CLP
@@ -153,10 +234,22 @@ REGLAS ESENCIALES:
    - "clothingItems": array de 4 prendas clave con emoji
 4. Cada día en "days" DEBE ser una jornada completa con entre 3 y 4 panoramas o paradas distribuidas cronológicamente (mañana cultural/patrimonio, almuerzo gastronómico típico, tarde paisajística/mirador/aventura y noche/cena), intercalando traslados ("type": "transfer"). ¡NUNCA generes una sola parada o actividad por día!
 5. El array "days" DEBE contener exactamente ${daysCount} objetos de día (uno por cada jornada, desde "dayNumber": 1 hasta "dayNumber": ${daysCount}). Si el viaje es de ${daysCount} días, incluye ${daysCount} días completos en el array "days".
+6. ESPECIFICIDAD GEOGRÁFICA REAL Y PROHIBICIÓN ESTRICTA DE LUGARES GENÉRICOS:
+   - El 100% de las paradas/actividades ("items" de "type": "activity") DEBEN corresponder a establecimientos, parques e hitos REALES, VERIFICABLES y EXISTENTES con nombre propio oficial dentro de "${input.destination}" (restaurantes reales con nombre, cafeterías de especialidad, picadas tradicionales reales, mercados municipales específicos, parques nacionales o urbanos, museos, plazas históricas, miradores reales con nombre, playas o senderos específicos).
+   - QUEDA ESTRICTAMENTE PROHIBIDO usar títulos o nombres genéricos, vagos o inventados sin establecimiento real (tales como "Restaurante local", "Paseo libre por el centro", "Almuerzo en mercado local", "Mirador panorámico y tarde cultural", "Hito patrimonial del casco antiguo", "Cena típica de cierre" o cualquier relleno ambiguo).
+   - Cada "title" DEBE incluir el nombre propio real del restaurante, parque, museo o hito (ej.: "Almuerzo marino en Mercado Fluvial y Cocinería Río Sur", "Sendero Los Lagos en Parque Nacional Huerquehue" o "Cena de autor en Restaurante La Olla").
+   - Cada "description" DEBE detallar elementos concretos de ese recinto real (plato estrella recomendado para pedir, sendero/sala/mirador específico, atmósfera real y por qué los locales lo recomiendan).
+   - Cada actividad DEBE incluir obligatoriamente en su objeto JSON "data":
+     * "placeName": SOLO el nombre propio oficial exacto del lugar (SIN prefijos como "Almuerzo en" ni "Visita a"), ej.: "Restaurante La Olla" o "Parque Urbano El Bosque". Se usa directamente para fijar el pin en Google Maps ("Ver en mapa") y buscar fotos reales.
+     * "addressOrSector": calle/avenida + numeración o sector/barrio real dentro de "${input.destination}", ej.: "Pedro de Valdivia 115, Centro, Pucón".
+     * "coordinates": { "lat": <number>, "lng": <number> } con latitud y longitud WGS84 reales y precisas de ese establecimiento o hito dentro de "${input.destination}".
+     * "mapQuery": "<placeName>, <addressOrSector>, <destination>, <country>".
+
+NOTA OBLIGATORIA SOBRE EL ESQUEMA DE EJEMPLO: Los nombres propios que aparecen abajo (Museo de Sitio Castillo de Niebla, Mercado Fluvial de Valdivia, Parque Urbano El Bosque, Cervecería Kunstmann) son ÚNICAMENTE ILUSTRATIVOS del nivel de especificidad exigido. Debes reemplazarlos al 100% por lugares, restaurantes, parques, direcciones y coordenadas REALES ubicados estrictamente en "${input.destination}".
 
 ESTRUCTURA EXACTA REQUERIDA DEL JSON:
 {
-  "title": "Ruta ${input.destination}",
+  "title": "Ruta por ${input.destination}",
   "destination": "${input.destination}",
   "country": "${isChile ? 'Chile' : 'País correspondiente'}",
   "region": "Región correspondiente",
@@ -172,23 +265,23 @@ ESTRUCTURA EXACTA REQUERIDA DEL JSON:
   "endDate": "${input.endDate}",
   "budgetLevel": "${input.budget}",
   "budgetLabel": "Económico / Presupuesto Medio / Premium",
-  "summary": "Resumen conciso del recorrido.",
+  "summary": "Resumen conciso del recorrido con hitos reales.",
   "season": "${weatherHint.season}",
   "weatherCondition": "${weatherHint.weatherCondition}",
   "temperatureRange": "${weatherHint.temperatureRange}",
   "weatherSummary": "${weatherHint.weatherSummary}",
   "clothingTip": "${weatherHint.clothingTip}",
   "clothingItems": ${JSON.stringify(weatherHint.clothingItems)},
-  "whyThisRoute": "Por qué esta ruta se adapta a tus intereses y al clima de la fecha.",
-  "savingTips": ["Consejo 1", "Consejo 2"],
+  "whyThisRoute": "Por qué esta ruta con lugares reales se adapta a tus intereses y al clima de la fecha.",
+  "savingTips": ["Consejo práctico real 1", "Consejo práctico real 2"],
   "days": [
     {
       "dayNumber": 1,
       "dateFormatted": "Día 1",
       "dailyCost": 65000,
       "dailyCostCLP": 65000,
-      "title": "Día 1: Sector Principal",
-      "summary": "Exploración de la zona.",
+      "title": "Día 1: Patrimonio Fluvial y Bosques en ${input.destination}",
+      "summary": "Exploración de hitos reales georreferenciados en ${input.destination}.",
       "items": [
         {
           "type": "activity",
@@ -197,57 +290,65 @@ ESTRUCTURA EXACTA REQUERIDA DEL JSON:
             "timeRange": "09:30 - 11:30",
             "startTime": "09:30",
             "endTime": "11:30",
-            "title": "Hito Patrimonial y Casco Histórico",
-            "description": "Visita matutina guiada por monumentos y plazas emblemáticas.",
-            "costText": "$5.000 CLP",
-            "costAmount": 5000,
+            "title": "Visita a Museo de Sitio Castillo de Niebla",
+            "placeName": "Museo de Sitio Castillo de Niebla",
+            "addressOrSector": "Calle del Castillo s/n, Niebla, Valdivia",
+            "coordinates": { "lat": -39.8692, "lng": -73.3968 },
+            "mapQuery": "Museo de Sitio Castillo de Niebla, Calle del Castillo s/n, Niebla, Valdivia, Chile",
+            "description": "Recorrido por las baterías defensivas españolas de piedra cancagua, casamatas y pasarelas sobre el estuario del río Valdivia.",
+            "costText": "Gratis",
+            "costAmount": 0,
             "category": "Cultura",
             "categoryIcon": "🏛️",
             "isFood": false,
-            "whyIncluded": "Inicio en el corazón patrimonial",
-            "history": "Reseña histórica del lugar.",
-            "historicalFacts": ["Siglo XIX: Construcción del hito"],
-            "curiosity": "Dato curioso del lugar.",
-            "architectureOrHeritage": "Estilo patrimonial.",
-            "savingTip": "Entrada liberada antes de las 11:00."
+            "whyIncluded": "Fortificación colonial auténtica con vista directa a la bahía de Corral.",
+            "history": "Construido en 1671 como parte del sistema defensivo austral de la Corona española.",
+            "historicalFacts": ["1671: Edificación del baluarte defensivo costero"],
+            "curiosity": "Sus muros fueron labrados directamente en roca cancagua volcánica local.",
+            "architectureOrHeritage": "Monumento Histórico Nacional de ingeniería militar colonial.",
+            "savingTip": "Acceso gratuito de martes a domingo registrándose en portería."
           }
         },
         {
           "type": "transfer",
           "data": {
             "id": "tr-1-1",
-            "text": "Caminata escénica hacia el sector gastronómico · 15 min",
-            "icon": "🚶"
+            "text": "Micro costera Expreso a la Costa hacia Costanera Prat · 25 min",
+            "icon": "🚌"
           }
         },
         {
           "type": "activity",
           "data": {
             "id": "act-1-2",
-            "timeRange": "12:30 - 14:00",
+            "timeRange": "12:30 - 14:15",
             "startTime": "12:30",
-            "endTime": "14:00",
-            "title": "Almuerzo Típico en Mercado Local",
-            "description": "Degustación de cocina tradicional y platos típicos con ingredientes de la zona.",
+            "endTime": "14:15",
+            "title": "Almuerzo marino en Feria Fluvial y Mercado Municipal de Valdivia",
+            "placeName": "Mercado Municipal de Valdivia",
+            "addressOrSector": "Av. Ramón Picarte 210, Costanera Centro, Valdivia",
+            "coordinates": { "lat": -39.8142, "lng": -73.2459 },
+            "mapQuery": "Mercado Municipal de Valdivia, Av. Ramón Picarte 210, Costanera Centro, Valdivia, Chile",
+            "description": "Degustación de paila marina, chupe de jaiba gratinado en greda y sierra ahumada en las cocinerías del segundo piso frente al río Calle-Calle.",
             "costText": "$15.000 CLP",
             "costAmount": 15000,
             "category": "Gastronomía",
             "categoryIcon": "🍽️",
             "isFood": true,
-            "whyIncluded": "Parada gastronómica obligada del mediodía",
-            "history": "Tradición culinaria de larga data.",
-            "historicalFacts": ["Receta tradicional transmitida entre generaciones"],
-            "curiosity": "Plato típico más pedido por locales.",
-            "architectureOrHeritage": "Cocinería en mercado histórico.",
-            "savingTip": "El menú del día incluye sopa o ensalada y bebida."
+            "whyIncluded": "Epicentro gastronómico ribereño recomendado por pescadores locales.",
+            "history": "Mercado histórico reconstruido con arcos y miradores tras el terremoto de 1960.",
+            "historicalFacts": ["Monumento Nacional y eje comercial fluvial desde principios del siglo XX"],
+            "curiosity": "Lobos marinos aguardan diariamente junto al muelle de los puestos pesqueros.",
+            "architectureOrHeritage": "Edificio patrimonial de influencia centroeuropea frente a la ribera fluvial.",
+            "savingTip": "Las cocinerías interiores ofrecen colación marina completa con pebre y pan amasado."
           }
         },
         {
           "type": "transfer",
           "data": {
             "id": "tr-1-2",
-            "text": "Traslado en transporte público o micro local · 20 min",
-            "icon": "🚌"
+            "text": "Traslado hacia Isla Teja cruzando el Puente Pedro de Valdivia · 15 min",
+            "icon": "🚶"
           }
         },
         {
@@ -257,53 +358,61 @@ ESTRUCTURA EXACTA REQUERIDA DEL JSON:
             "timeRange": "15:00 - 17:30",
             "startTime": "15:00",
             "endTime": "17:30",
-            "title": "Mirador Panorámico y Tarde Cultural",
-            "description": "Paseo por senderos, talleres artesanales y vista panorámica privilegiada.",
-            "costText": "$8.000 CLP",
-            "costAmount": 8000,
+            "title": "Sendero Selva Valdiviana en Jardín Botánico UACh",
+            "placeName": "Jardín Botánico UACh",
+            "addressOrSector": "Campus Isla Teja s/n, Isla Teja, Valdivia",
+            "coordinates": { "lat": -39.8045, "lng": -73.2516 },
+            "mapQuery": "Jardín Botánico UACh, Campus Isla Teja s/n, Isla Teja, Valdivia, Chile",
+            "description": "Caminata entre más de 950 especies de bosque templado lluvioso, arrayanes, alerces y mirador hacia el río Cau-Cau.",
+            "costText": "$3.000 CLP",
+            "costAmount": 3000,
             "category": "Naturaleza & Paisaje",
-            "categoryIcon": "🌄",
+            "categoryIcon": "🌿",
             "isFood": false,
-            "whyIncluded": "Vistas excepcionales y fotografía en horario de buena luz",
-            "history": "Antiguo punto de vigía.",
-            "historicalFacts": ["Punto estratégico de observación"],
-            "curiosity": "Mejor punto para apreciar el entorno.",
-            "architectureOrHeritage": "Mirador habilitado.",
-            "savingTip": "Acceso peatonal gratuito."
+            "whyIncluded": "Reserva botánica universitaria inmersa en bosque nativo dentro de la ciudad.",
+            "history": "Fundado en 1957 por el rector Eduardo Morales Miranda en la Universidad Austral.",
+            "historicalFacts": ["1957: Creación de las colecciones de flora endémica del sur de Chile"],
+            "curiosity": "Conserva especies amenazadas del bosque laurifolio valdiviano.",
+            "architectureOrHeritage": "Paisajismo científico integrado a humedales ribereños.",
+            "savingTip": "Estudiantes y adultos mayores cuentan con tarifa rebajada en boletería."
           }
         },
         {
           "type": "transfer",
           "data": {
             "id": "tr-1-3",
-            "text": "Caminata de retorno al barrio cívico · 15 min",
-            "icon": "🚶"
+            "text": "Traslado por Ruta T-350 hacia el sector Torobayo · 10 min",
+            "icon": "🚌"
           }
         },
         {
           "type": "activity",
           "data": {
             "id": "act-1-4",
-            "timeRange": "19:30 - 21:00",
+            "timeRange": "19:30 - 21:30",
             "startTime": "19:30",
-            "endTime": "21:00",
-            "title": "Cena Tradicional y Paseo Nocturno",
-            "description": "Cierre de jornada con cocina local, música o café en terraza.",
-            "costText": "$18.000 CLP",
-            "costAmount": 18000,
+            "endTime": "21:30",
+            "title": "Cena cervecera y crudo alemán en La Cervecería Kunstmann",
+            "placeName": "La Cervecería Kunstmann",
+            "addressOrSector": "Ruta T-350 Km 3.5, Sector Torobayo, Valdivia",
+            "coordinates": { "lat": -39.8322, "lng": -73.2681 },
+            "mapQuery": "La Cervecería Kunstmann, Ruta T-350 Km 3.5, Sector Torobayo, Valdivia, Chile",
+            "description": "Cierre de jornada pidiendo el tradicional crudo valdiviano, pernil crocante con chucrut y vuelo de degustación de cervezas artesanales sin filtrar.",
+            "costText": "$22.000 CLP",
+            "costAmount": 22000,
             "category": "Gastronomía",
-            "categoryIcon": "🍷",
+            "categoryIcon": "🍺",
             "isFood": true,
-            "whyIncluded": "Cierre relajado de la jornada",
-            "history": "Barrio bohemio emblemático.",
-            "historicalFacts": ["Punto de encuentro cultural"],
-            "curiosity": "Ambiente iluminado de noche.",
-            "architectureOrHeritage": "Casona antigua restaurada.",
-            "savingTip": "Promociones en happy hour."
+            "whyIncluded": "Icono de la tradición cervecera germano-valdiviana con sala de cocimiento a la vista.",
+            "history": "Nacida de la herencia cervecera iniciada por Carlos Anwandter en 1851.",
+            "historicalFacts": ["1997: Apertura de la casa cervecera en Torobayo"],
+            "curiosity": "Sus especialidades experimentales se elaboran con agua blanda de vertiente valdiviana.",
+            "architectureOrHeritage": "Casona de maderas nativas y vigas a la vista estilo alpino-sureño.",
+            "savingTip": "Reservar mesa online con anticipación evita esperas en horario de cena."
           }
         }
       ]
-    }${daysCount > 1 ? `,\n    /* Continúa con los días 2 a ${daysCount} siguiendo esta misma estructura de 3 a 4 actividades por día */` : ''}
+    }${daysCount > 1 ? `,\n    /* Continúa con los días 2 a ${daysCount} usando EXCLUSIVAMENTE lugares reales con nombre propio, dirección y coordenadas dentro de "${input.destination}" */` : ''}
   ]
 }`;
 }
@@ -398,6 +507,7 @@ export function extractJson(text: string): any {
 
   throw new Error('No se pudo extraer un objeto JSON válido del texto del modelo');
 }
+
 /**
  * NIVEL GEMINI: Generación con Google Gemini API
  */
@@ -493,7 +603,7 @@ export async function callOpenAI(
         {
           role: 'system',
           content:
-            'Eres un motor de planificación de rutas turísticas en CLP. Responde ÚNICAMENTE con un objeto JSON válido siguiendo el contrato solicitado.',
+            'Eres un motor experto de planificación de rutas turísticas reales en CLP. El 100% de las paradas DEBEN ser restaurantes, cafeterías, parques, museos o hitos REALES con nombre propio oficial (placeName), dirección/sector real (addressOrSector), coordenadas WGS84 verificables (coordinates) y consulta de mapa (mapQuery) en el destino solicitado. Queda estrictamente prohibido generar títulos genéricos. Responde ÚNICAMENTE con un objeto JSON válido siguiendo el contrato solicitado.',
         },
         {
           role: 'user',
@@ -512,9 +622,9 @@ export async function callOpenAI(
       payload.reasoning_effort = 'low';
     }
     if (opts.useMaxTokens) {
-      payload.max_tokens = 3500;
+      payload.max_tokens = 4500;
     } else {
-      payload.max_completion_tokens = classic ? 4000 : 8000;
+      payload.max_completion_tokens = classic ? 4500 : 8500;
     }
     return payload;
   };
@@ -670,7 +780,7 @@ export async function callOpenRouter(prompt: string, apiKeyOverride?: string): P
         {
           role: 'system',
           content:
-            'Eres un motor de planificación de rutas turísticas de alta precisión en CLP. Responde ÚNICAMENTE con un objeto JSON válido conforme a la estructura solicitada, sin bloques markdown ni texto adicional.',
+            'Eres un motor de planificación de rutas turísticas de alta precisión en CLP. Todas las actividades DEBEN usar nombres propios reales de establecimientos, parques o hitos existentes en el destino solicitado, con placeName, addressOrSector, coordinates WGS84 y mapQuery. Responde ÚNICAMENTE con un objeto JSON válido conforme a la estructura solicitada, sin bloques markdown ni texto adicional.',
         },
         {
           role: 'user',
@@ -678,7 +788,7 @@ export async function callOpenRouter(prompt: string, apiKeyOverride?: string): P
         },
       ],
       temperature: 0.7,
-      max_tokens: 3500,
+      max_tokens: 4500,
     };
     if (includeResponseFormat) {
       bodyObj.response_format = { type: 'json_object' };
@@ -788,8 +898,48 @@ export function generateLocalOfflineItinerary(
   const resolvedWeather =
     weatherOverride || getWeatherAndClothingForTrip(input.destination, input.startDate, input.endDate);
 
+  const cleanDest = trip.destination || input.destination.split(',')[0].trim();
+  const resolvedCountry = trip.country || (isChile ? 'Chile' : 'Internacional');
+
+  const daysWithGeo = (trip.days || []).map((day) => {
+    const items = (day.items || []).map((item) => {
+      if (item.type === 'activity' && item.data) {
+        const placeName = deriveCleanPlaceName(item.data.placeName, item.data.title, cleanDest);
+        const addressOrSector = item.data.addressOrSector || trip.commune || cleanDest;
+        const coordinates = normalizeCoordinates(item.data.coordinates);
+        const mapQuery = buildActivityMapQuery(
+          item.data.mapQuery,
+          placeName,
+          addressOrSector,
+          cleanDest,
+          resolvedCountry
+        );
+        return {
+          ...item,
+          data: {
+            ...item.data,
+            placeName,
+            addressOrSector,
+            ...(coordinates ? { coordinates } : {}),
+            mapQuery,
+          },
+        };
+      }
+      return item;
+    });
+    const activities = items
+      .filter((it): it is { type: 'activity'; data: Activity } => it.type === 'activity' && Boolean(it.data))
+      .map((it) => it.data);
+    return {
+      ...day,
+      activities,
+      items,
+    };
+  });
+
   return {
     ...trip,
+    days: daysWithGeo,
     season: resolvedWeather.season,
     currentSeason: resolvedWeather.currentSeason,
     weatherCondition: resolvedWeather.weatherCondition,
@@ -811,8 +961,358 @@ export function synthesizeFallbackTrip(input: PlanRouteInput): Trip {
   return generateLocalOfflineItinerary(input);
 }
 
+interface SpecificLandmarkStop {
+  title: string;
+  placeName: string;
+  addressOrSector: string;
+  coordinates?: { lat: number; lng: number };
+  description: string;
+  category: string;
+  categoryIcon: string;
+  isFood: boolean;
+  whyIncluded: string;
+  history: string;
+  historicalFacts: string[];
+  curiosity: string;
+  architectureOrHeritage: string;
+  savingTip: string;
+}
+
+const KNOWN_CITY_EMERGENCY_LANDMARKS: Record<
+  string,
+  { food: SpecificLandmarkStop; cultural: SpecificLandmarkStop }
+> = {
+  valdivia: {
+    food: {
+      title: 'Almuerzo marino en Mercado Municipal de Valdivia',
+      placeName: 'Mercado Municipal de Valdivia',
+      addressOrSector: 'Av. Ramón Picarte 210, Costanera, Valdivia',
+      coordinates: { lat: -39.8142, lng: -73.2459 },
+      description: 'Degustación de paila marina, congrio frito y sierra ahumada en las cocinerías tradicionales frente al río Calle-Calle.',
+      category: 'Gastronomía',
+      categoryIcon: '🍽️',
+      isFood: true,
+      whyIncluded: 'Hito culinario fluvial emblemático de Valdivia.',
+      history: 'Monumento Histórico frente a la Feria Fluvial reconstruido tras 1960.',
+      historicalFacts: ['Monumento Nacional y mercado ribereño insignia del sur de Chile.'],
+      curiosity: 'Sus cocinerías familiares abastecen platos preparados con pesca artesanal del día en Niebla y Corral.',
+      architectureOrHeritage: 'Edificio patrimonial de arcos y miradores fluviales.',
+      savingTip: 'Los menús del segundo piso incluyen sopa o ensalada y pan amasado.',
+    },
+    cultural: {
+      title: 'Mirador Costanera Arturo Prat y Centro Cultural El Austral',
+      placeName: 'Centro Cultural El Austral',
+      addressOrSector: 'Yungay 733, Zona Típica Calle General Lagos, Valdivia',
+      coordinates: { lat: -39.8178, lng: -73.2485 },
+      description: 'Recorrido por las casonas alemanas de madera nativa en General Lagos, salas de exposición y mirador ribereño al río Valdivia.',
+      category: 'Cultura & Paisaje',
+      categoryIcon: '🏛️',
+      isFood: false,
+      whyIncluded: 'Patrimonio arquitectónico valdiviano y vistas panorámicas al río.',
+      history: 'Casona patrimonial del siglo XIX rehabilitada para exposiciones de arte e historia sureña.',
+      historicalFacts: ['Zona Típica protegida por el Consejo de Monumentos Nacionales.'],
+      curiosity: 'Conserva revestimientos originales en tejuela de alerce y carpintería de colonos.',
+      architectureOrHeritage: 'Casona histórica en madera de roble y alerce de la Zona Típica General Lagos.',
+      savingTip: 'Entrada gratuita a las salas de exposición durante todo el año.',
+    },
+  },
+  'la serena': {
+    food: {
+      title: 'Almuerzo regional en Mercado La Recova',
+      placeName: 'Mercado La Recova',
+      addressOrSector: 'Cienfuegos 699, Centro Histórico, La Serena',
+      coordinates: { lat: -29.9016, lng: -71.2484 },
+      description: 'Cocinerías tradicionales en el segundo nivel con cabrito al jugo, machas a la parmesana y postres de papaya serenense.',
+      category: 'Gastronomía',
+      categoryIcon: '🍽️',
+      isFood: true,
+      whyIncluded: 'Principal polo gastronómico y artesanal de La Serena.',
+      history: 'Centro tradicional de abastos y artesanía en piedra combarbalita y cerámica diaguita.',
+      historicalFacts: ['Edificio neocolonial característico del Plan Serena.'],
+      curiosity: 'Aquí se consiguen papayas confitadas elaboradas con recetas centenarias del valle.',
+      architectureOrHeritage: 'Arquitectura neocolonial serenense con arquerías y patios interiores.',
+      savingTip: 'Pide el menú de mediodía en las cocinerías del patio superior.',
+    },
+    cultural: {
+      title: 'Mirador Parque Japonés Kokoro No Niwa y Ruta Cultural',
+      placeName: 'Parque Japonés Kokoro No Niwa',
+      addressOrSector: 'Eduardo de la Barra 25, Centro, La Serena',
+      coordinates: { lat: -29.9052, lng: -71.2546 },
+      description: 'Sendero de contemplación con laguna de carpas koi, puente tradicional de piedra, bonsáis y jardines diseñados junto a paisajistas de Tenri.',
+      category: 'Cultura & Paisaje',
+      categoryIcon: '🌿',
+      isFood: false,
+      whyIncluded: 'El jardín japonés más grande de Sudamérica a pasos de la Plaza de Armas.',
+      history: 'Inaugurado en 1994 por el hermanamiento cultural entre La Serena y Tenri (Japón).',
+      historicalFacts: ['1994: Apertura oficial conmemorando los 450 años de La Serena.'],
+      curiosity: 'Su nombre significa "Jardín del Corazón" en idioma japonés.',
+      architectureOrHeritage: 'Paisajismo tradicional japonés con pagodas, linternas de piedra e islas conectadas.',
+      savingTip: 'Tarifa municipal económica en boletería de calle Eduardo de la Barra.',
+    },
+  },
+};
+
 /**
- * Normaliza la salida de cualquier proveedor IA (OpenAI u OpenRouter) al Contrato de Salida Unificado
+ * Builds up to 3 emergency stops ONLY when a malformed cloud response returned < 3 activities on a day,
+ * prioritizing real venues from DESTINATIONS_CATALOG or known city landmarks (never generic 4th dinner filler).
+ */
+function buildEmergencyStopsForShortDay(
+  existingActivities: Activity[],
+  matchedCatalog: DestinationInfo | undefined,
+  dayNumber: number,
+  budget: BudgetLevel,
+  cleanDestination: string,
+  resolvedCountry: string,
+  isChile: boolean
+): Array<{ type: 'activity'; data: Activity } | { type: 'transfer'; data: { id: string; text: string; icon: string } }> {
+  const extraItems: Array<
+    { type: 'activity'; data: Activity } | { type: 'transfer'; data: { id: string; text: string; icon: string } }
+  > = [];
+
+  let totalActivitiesCount = existingActivities.length;
+  if (totalActivitiesCount >= 3) {
+    return extraItems;
+  }
+
+  const usedTitles = new Set(existingActivities.map((a) => a.title.toLowerCase().trim()));
+  let hasFood = existingActivities.some(
+    (a) => a.isFood || String(a.category || '').toLowerCase().includes('gastro')
+  );
+  let actCounter = existingActivities.length + 1;
+
+  const budgetKey = budget === 'budget' ? 'costBudget' : budget === 'premium' ? 'costPremium' : 'costStandard';
+
+  if (matchedCatalog && Array.isArray(matchedCatalog.dailyPlans) && matchedCatalog.dailyPlans.length > 0) {
+    const planTemplate = matchedCatalog.dailyPlans[(dayNumber - 1) % matchedCatalog.dailyPlans.length];
+    const allCatalogActs = [
+      ...(planTemplate?.activities || []),
+      ...matchedCatalog.dailyPlans.flatMap((dp) => dp.activities || []),
+    ];
+
+    const pickCatalogCandidate = (preferFood: boolean) =>
+      allCatalogActs.find((cand) => {
+        const normTitle = cand.title.toLowerCase().trim();
+        if (usedTitles.has(normTitle)) return false;
+        const candIsFood = Boolean(cand.isFood || cand.category.toLowerCase().includes('gastro'));
+        return preferFood ? candIsFood : !candIsFood;
+      }) || allCatalogActs.find((cand) => !usedTitles.has(cand.title.toLowerCase().trim()));
+
+    while (totalActivitiesCount < 3) {
+      const candidate = pickCatalogCandidate(!hasFood);
+      if (!candidate) break;
+
+      usedTitles.add(candidate.title.toLowerCase().trim());
+      const costAmount = Number(candidate[budgetKey] ?? candidate.costStandard ?? 0);
+      const placeName = deriveCleanPlaceName(undefined, candidate.title, cleanDestination);
+      const addressOrSector = planTemplate?.sector || matchedCatalog.comunasOrSectors?.[0]?.name || cleanDestination;
+      const mapQuery = buildActivityMapQuery(undefined, placeName, addressOrSector, cleanDestination, resolvedCountry);
+      const candIsFood = Boolean(candidate.isFood || candidate.category.toLowerCase().includes('gastro'));
+      if (candIsFood) hasFood = true;
+
+      extraItems.push({
+        type: 'transfer',
+        data: {
+          id: `tr-${dayNumber}-${actCounter}`,
+          text: `Traslado hacia ${placeName} · 15 min`,
+          icon: candIsFood ? '🚶' : '🚌',
+        },
+      });
+      extraItems.push({
+        type: 'activity',
+        data: {
+          id: `act-${dayNumber}-${actCounter++}`,
+          timeRange: candidate.timeRange || (candIsFood ? '13:00 - 14:30' : '15:30 - 17:30'),
+          startTime: candidate.startTime || (candIsFood ? '13:00' : '15:30'),
+          endTime: candidate.endTime || (candIsFood ? '14:30' : '17:30'),
+          title: candidate.title,
+          placeName,
+          addressOrSector,
+          mapQuery,
+          description: candidate.description,
+          costAmount,
+          costText: costAmount === 0 ? 'Gratis' : `$${costAmount.toLocaleString('es-CL')} CLP`,
+          category: candidate.category,
+          categoryIcon: candidate.categoryIcon,
+          isFood: candIsFood,
+          whyIncluded: candidate.whyIncluded,
+          history: candidate.history,
+          historicalFacts: candidate.historicalFacts || ['Hito patrimonial y turístico destacado de la ciudad.'],
+          curiosity: candidate.curiosity || 'Punto recomendado por residentes y guías locales.',
+          architectureOrHeritage: candidate.architectureOrHeritage || 'Patrimonio urbano y cultural reconocido.',
+          savingTip: candidate.savingTip,
+        },
+      });
+      totalActivitiesCount++;
+    }
+  }
+
+  const normDestKey = cleanDestination
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+  const knownCity =
+    KNOWN_CITY_EMERGENCY_LANDMARKS[normDestKey] ||
+    Object.entries(KNOWN_CITY_EMERGENCY_LANDMARKS).find(
+      ([k]) => normDestKey.includes(k) || k.includes(normDestKey)
+    )?.[1];
+
+  if (totalActivitiesCount < 3 && !hasFood) {
+    const lunchCost = budget === 'budget' ? 7500 : budget === 'premium' ? 32000 : 16000;
+    const foodStop: SpecificLandmarkStop = knownCity?.food || {
+      title: `Almuerzo en Mercado Municipal de ${cleanDestination}`,
+      placeName: `Mercado Municipal de ${cleanDestination}`,
+      addressOrSector: `Centro Histórico, ${cleanDestination}`,
+      description: `Degustación de platos emblemáticos preparados al momento en las cocinerías tradicionales del Mercado Municipal de ${cleanDestination}.`,
+      category: 'Gastronomía',
+      categoryIcon: '🍽️',
+      isFood: true,
+      whyIncluded: `Punto gastronómico auténtico en el corazón de ${cleanDestination}.`,
+      history: `Centro histórico de abastos y cocina tradicional de ${cleanDestination}.`,
+      historicalFacts: [`Tradición culinaria representativa de ${cleanDestination}.`],
+      curiosity: 'Las cocinerías locales trabajan con ingredientes frescos de productores de la zona.',
+      architectureOrHeritage: 'Recinto histórico de abastos y gastronomía local.',
+      savingTip: 'El menú de mediodía incluye entrada, plato principal y acompañamiento.',
+    };
+
+    const mapQuery = buildActivityMapQuery(
+      undefined,
+      foodStop.placeName,
+      foodStop.addressOrSector,
+      cleanDestination,
+      resolvedCountry
+    );
+
+    extraItems.push({
+      type: 'transfer',
+      data: {
+        id: `tr-${dayNumber}-${actCounter}`,
+        text: `Caminata hacia ${foodStop.placeName} · 15 min`,
+        icon: '🚶',
+      },
+    });
+    extraItems.push({
+      type: 'activity',
+      data: {
+        id: `act-${dayNumber}-${actCounter++}`,
+        timeRange: '12:30 - 14:00',
+        startTime: '12:30',
+        endTime: '14:00',
+        title: foodStop.title,
+        placeName: foodStop.placeName,
+        addressOrSector: foodStop.addressOrSector,
+        ...(foodStop.coordinates ? { coordinates: foodStop.coordinates } : {}),
+        mapQuery,
+        description: foodStop.description,
+        costAmount: lunchCost,
+        costText: `$${lunchCost.toLocaleString('es-CL')} CLP`,
+        category: foodStop.category,
+        categoryIcon: foodStop.categoryIcon,
+        isFood: true,
+        whyIncluded: foodStop.whyIncluded,
+        history: foodStop.history,
+        historicalFacts: foodStop.historicalFacts,
+        curiosity: foodStop.curiosity,
+        architectureOrHeritage: foodStop.architectureOrHeritage,
+        savingTip: foodStop.savingTip,
+      },
+    });
+    hasFood = true;
+    totalActivitiesCount++;
+  }
+
+  while (totalActivitiesCount < 3) {
+    const afternoonCost = budget === 'budget' ? 0 : budget === 'premium' ? 18000 : 8000;
+    const useKnownCultural = knownCity?.cultural && !usedTitles.has(knownCity.cultural.title.toLowerCase());
+    const culturalStop: SpecificLandmarkStop = useKnownCultural
+      ? knownCity!.cultural
+      : totalActivitiesCount === 1
+      ? {
+          title: isChile
+            ? `Plaza de Armas y Museo Histórico de ${cleanDestination}`
+            : `Plaza Mayor y Museo Histórico de ${cleanDestination}`,
+          placeName: isChile
+            ? `Plaza de Armas de ${cleanDestination}`
+            : `Plaza Mayor de ${cleanDestination}`,
+          addressOrSector: `Casco Histórico, ${cleanDestination}`,
+          description: `Recorrido por el núcleo fundacional, arquitectura cívica y colecciones patrimoniales de ${cleanDestination}.`,
+          category: 'Cultura',
+          categoryIcon: '🏛️',
+          isFood: false,
+          whyIncluded: `Hito cívico e histórico central de ${cleanDestination}.`,
+          history: `Espacio fundacional donde se trazaron los primeros edificios públicos de ${cleanDestination}.`,
+          historicalFacts: [`Centro histórico protegido de ${cleanDestination}.`],
+          curiosity: 'Concentra las edificaciones patrimoniales más fotografiadas de la ciudad.',
+          architectureOrHeritage: 'Trazado fundacional y monumentos históricos.',
+          savingTip: 'Recorrido exterior libre durante toda la jornada.',
+        }
+      : {
+          title: `Mirador Principal y Centro Cultural de ${cleanDestination}`,
+          placeName: `Centro Cultural de ${cleanDestination}`,
+          addressOrSector: `Sector Patrimonial, ${cleanDestination}`,
+          description: `Visita vespertina a las salas culturales y mirador urbano con vistas despejadas hacia ${cleanDestination}.`,
+          category: 'Cultura & Paisaje',
+          categoryIcon: '🌄',
+          isFood: false,
+          whyIncluded: `Vistas panorámicas y agenda cultural representativa de ${cleanDestination}.`,
+          history: `Espacio público recuperado para las artes y la observación paisajística en ${cleanDestination}.`,
+          historicalFacts: [`Punto cultural y paisajístico emblemático de ${cleanDestination}.`],
+          curiosity: 'Horario ideal al caer la tarde por su iluminación natural.',
+          architectureOrHeritage: 'Conjunto cultural y mirador público habilitado.',
+          savingTip: 'Consulta la cartelera de exposiciones abiertas de acceso gratuito.',
+        };
+
+    usedTitles.add(culturalStop.title.toLowerCase());
+    const mapQuery = buildActivityMapQuery(
+      undefined,
+      culturalStop.placeName,
+      culturalStop.addressOrSector,
+      cleanDestination,
+      resolvedCountry
+    );
+
+    extraItems.push({
+      type: 'transfer',
+      data: {
+        id: `tr-${dayNumber}-${actCounter}`,
+        text: `Traslado hacia ${culturalStop.placeName} · 15 min`,
+        icon: '🚌',
+      },
+    });
+    extraItems.push({
+      type: 'activity',
+      data: {
+        id: `act-${dayNumber}-${actCounter++}`,
+        timeRange: '15:30 - 17:30',
+        startTime: '15:30',
+        endTime: '17:30',
+        title: culturalStop.title,
+        placeName: culturalStop.placeName,
+        addressOrSector: culturalStop.addressOrSector,
+        ...(culturalStop.coordinates ? { coordinates: culturalStop.coordinates } : {}),
+        mapQuery,
+        description: culturalStop.description,
+        costAmount: afternoonCost,
+        costText: afternoonCost === 0 ? 'Gratis' : `$${afternoonCost.toLocaleString('es-CL')} CLP`,
+        category: culturalStop.category,
+        categoryIcon: culturalStop.categoryIcon,
+        isFood: false,
+        whyIncluded: culturalStop.whyIncluded,
+        history: culturalStop.history,
+        historicalFacts: culturalStop.historicalFacts,
+        curiosity: culturalStop.curiosity,
+        architectureOrHeritage: culturalStop.architectureOrHeritage,
+        savingTip: culturalStop.savingTip,
+      },
+    });
+    totalActivitiesCount++;
+  }
+
+  return extraItems;
+}
+
+/**
+ * Normaliza la salida de cualquier proveedor IA (OpenAI, OpenRouter o Gemini) al Contrato de Salida Unificado
  */
 export function normalizeCloudTripResponse(
   rawTrip: any,
@@ -826,8 +1326,51 @@ export function normalizeCloudTripResponse(
   const cleanDest = input.destination.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const matchedCatalog = DESTINATIONS_CATALOG.find((cat) => {
     const catClean = cat.name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    return cleanDest.includes(catClean) || catClean.includes(cleanDest);
+    const fullClean = cat.fullName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    return (
+      cleanDest.includes(catClean) ||
+      catClean.includes(cleanDest) ||
+      fullClean.includes(cleanDest) ||
+      cat.aliases.some((a) => cleanDest.includes(a.toLowerCase()))
+    );
   });
+
+  const prelimMeta = inferDestinationMetadata(
+    input.destination,
+    matchedCatalog,
+    isChile,
+    60000 * daysCount,
+    daysCount,
+    input.interests
+  );
+
+  const destinationName =
+    typeof rawTrip.destination === 'string' && rawTrip.destination.trim()
+      ? rawTrip.destination.split(',')[0].trim()
+      : prelimMeta.destination;
+
+  const commaCountryHint = input.destination.includes(',')
+    ? input.destination.split(',').slice(1).join(',').trim()
+    : '';
+
+  const country =
+    typeof rawTrip.country === 'string' &&
+    rawTrip.country.trim() &&
+    rawTrip.country.trim().toLowerCase() !== 'internacional' &&
+    rawTrip.country.trim().toLowerCase() !== 'país correspondiente'
+      ? rawTrip.country.trim()
+      : prelimMeta.country !== 'Internacional'
+      ? prelimMeta.country
+      : commaCountryHint || prelimMeta.country;
+
+  const region =
+    typeof rawTrip.region === 'string' && rawTrip.region.trim() && rawTrip.region.trim() !== 'Región correspondiente'
+      ? rawTrip.region.trim()
+      : prelimMeta.region;
+  const commune =
+    typeof rawTrip.commune === 'string' && rawTrip.commune.trim() && rawTrip.commune.trim() !== 'Sector principal'
+      ? rawTrip.commune.trim()
+      : prelimMeta.commune;
 
   const budgetInfoMap: Record<BudgetLevel, string> = {
     budget: 'Económico',
@@ -881,13 +1424,22 @@ export function normalizeCloudTripResponse(
             startTime: actData.startTime || '09:30',
             endTime: actData.endTime || '11:30',
             title: actData.title || actData.name || `Actividad ${actIdx + 1}`,
-            description: actData.description || `Recorrido en ${input.destination}.`,
+            placeName: actData.placeName,
+            addressOrSector: actData.addressOrSector ?? actData.address ?? actData.sector,
+            coordinates: actData.coordinates,
+            mapQuery: actData.mapQuery,
+            description: actData.description || `Recorrido en ${destinationName}.`,
             costAmount: actCost,
             costText:
               actData.costText ||
               (actCost === 0 ? 'Gratis' : `$${actCost.toLocaleString('es-CL')} CLP`),
             category: actData.category || 'Cultura',
             categoryIcon: actData.categoryIcon || '🏛️',
+            imageUrl: isValidHttpUrl(actData.imageUrl) ? actData.imageUrl.trim() : undefined,
+            imagePhotographer: actData.imagePhotographer,
+            imagePhotographerUrl: isValidHttpUrl(actData.imagePhotographerUrl)
+              ? actData.imagePhotographerUrl.trim()
+              : undefined,
             isFood: Boolean(actData.isFood),
             whyIncluded: actData.whyIncluded || 'Recomendado por relevancia local.',
             history: actData.history,
@@ -905,150 +1457,88 @@ export function normalizeCloudTripResponse(
       if (item.type === 'activity' && item.data) {
         const act = item.data;
         const costAmount = Number(act.costAmount ?? act.costCLP ?? act.cost ?? 0);
+        const title = String(act.title || act.name || '').trim() || `Visita en ${destinationName}`;
+        const placeName = deriveCleanPlaceName(act.placeName, title, destinationName);
+        const rawAddress = act.addressOrSector ?? act.address ?? act.sector;
+        const addressOrSector =
+          typeof rawAddress === 'string' && rawAddress.trim().length > 0 ? rawAddress.trim() : undefined;
+        const coordinates = normalizeCoordinates(act.coordinates);
+        const mapQuery = buildActivityMapQuery(
+          act.mapQuery,
+          placeName,
+          addressOrSector,
+          destinationName,
+          country
+        );
+
+        const normalizedData: Activity = {
+          ...act,
+          title,
+          placeName,
+          ...(addressOrSector ? { addressOrSector } : {}),
+          ...(coordinates ? { coordinates } : {}),
+          mapQuery,
+          imageUrl: isValidHttpUrl(act.imageUrl) ? act.imageUrl.trim() : undefined,
+          costAmount,
+          costText: act.costText || (costAmount === 0 ? 'Gratis' : `$${costAmount.toLocaleString('es-CL')} CLP`),
+          history:
+            act.history ||
+            (isChile
+              ? `Emplazado en una de las zonas de mayor valor patrimonial de ${destinationName}, ${placeName} conserva hitos clave del desarrollo cultural local.`
+              : `Hito representativo de ${destinationName} reconocido por su trayectoria histórica y arquitectónica.`),
+          curiosity:
+            act.curiosity ||
+            `${placeName} es frecuentado por residentes locales por su identidad propia y ubicación estratégica.`,
+          architectureOrHeritage:
+            act.architectureOrHeritage ||
+            (isChile
+              ? 'Valor patrimonial con arquitectura tradicional y materiales propios de la zona.'
+              : 'Patrimonio arquitectónico e histórico destacado.'),
+          historicalFacts:
+            Array.isArray(act.historicalFacts) && act.historicalFacts.length > 0
+              ? act.historicalFacts
+              : [
+                  `Consolidación histórica de ${placeName} dentro de ${destinationName}.`,
+                  'Punto de referencia local y visita recomendada.',
+                ],
+          savingTip:
+            act.savingTip || 'Visitar con reserva previa o en primera franja horaria optimiza tiempos de espera.',
+        };
+
+        if (!coordinates) {
+          delete normalizedData.coordinates;
+        }
+        if (!addressOrSector) {
+          delete normalizedData.addressOrSector;
+        }
+
         return {
           ...item,
-          data: {
-            ...act,
-            costAmount,
-            costText: act.costText || (costAmount === 0 ? 'Gratis' : `$${costAmount.toLocaleString('es-CL')} CLP`),
-            history:
-              act.history ||
-              (isChile
-                ? `Emplazado en una de las zonas de mayor valor patrimonial de ${input.destination}, este sitio conserva vestigios del florecimiento cívico y cultural local.`
-                : `Hito representativo de ${input.destination} que atesora siglos de evolución histórica y arquitectónica.`),
-            curiosity:
-              act.curiosity ||
-              'En este lugar se realizaban antiguamente encuentros ciudadanos y ferias tradicionales.',
-            architectureOrHeritage:
-              act.architectureOrHeritage ||
-              (isChile
-                ? 'Zona de valor patrimonial con arquitectura tradicional y materiales nobles.'
-                : 'Patrimonio arquitectónico e histórico protegido.'),
-            historicalFacts:
-              Array.isArray(act.historicalFacts) && act.historicalFacts.length > 0
-                ? act.historicalFacts
-                : [
-                    'Orígenes: Primeros asentamientos y trazado fundacional de la zona.',
-                    'Actualidad: Punto protegido de identidad cultural y visita obligada.',
-                  ],
-            savingTip:
-              act.savingTip || 'Visitar en las primeras horas de la mañana ofrece mejor luz y menor afluencia.',
-          },
+          data: normalizedData,
         };
       }
       return item;
     });
 
-    let finalItems = [...enrichedItems];
-    const currentActivities = finalItems.filter((it: any) => it.type === 'activity' && it.data);
+    const finalItems = [...enrichedItems];
+    const currentActivities: Activity[] = finalItems
+      .filter((it: any) => it.type === 'activity' && it.data)
+      .map((it: any) => it.data);
     const dayNumber = d.dayNumber || idx + 1;
-    const destClean = input.destination.split(',')[0].trim();
 
+    // Solo si el modelo devolvió menos de 3 paradas (caso borde malformado), completar hasta 3 paradas específicas.
+    // Si el modelo ya devolvió >= 3 paradas válidas, NO inyectar rellenos sintéticos ni una 4ª cena genérica.
     if (currentActivities.length < 3) {
-      const hasFood = currentActivities.some((it: any) => it.data?.isFood || it.data?.category?.toLowerCase().includes('gastro'));
-      let actCounter = currentActivities.length + 1;
-
-      if (!hasFood) {
-        const lunchCost = input.budget === 'budget' ? 7000 : input.budget === 'premium' ? 32000 : 16000;
-        finalItems.push({
-          type: 'transfer',
-          data: {
-            id: `tr-${dayNumber}-${actCounter}`,
-            text: isChile ? 'Caminata hacia mercado o picada gastronómica tradicional · 15 min' : 'Traslado a zona gastronómica local · 15 min',
-            icon: '🚶',
-          },
-        });
-        finalItems.push({
-          type: 'activity',
-          data: {
-            id: `act-${dayNumber}-${actCounter++}`,
-            timeRange: '12:30 - 14:00',
-            startTime: '12:30',
-            endTime: '14:00',
-            title: `Almuerzo Típico y Degustación en ${destClean}`,
-            description: `Parada gastronómica para degustar preparaciones tradicionales con ingredientes frescos locales.`,
-            costAmount: lunchCost,
-            costText: `$${lunchCost.toLocaleString('es-CL')} CLP`,
-            category: 'Gastronomía',
-            categoryIcon: '🍽️',
-            isFood: true,
-            whyIncluded: 'Parada gastronómica identitaria del mediodía.',
-            history: 'Cocinerías familiares con recetas tradicionales conservadas durante décadas.',
-            historicalFacts: ['Tradición gastronómica del mercado comunal.'],
-            curiosity: 'Platos preparados al momento con sazón de la zona.',
-            architectureOrHeritage: 'Cocinería en barrio histórico.',
-            savingTip: 'El menú ejecutivo incluye plato de fondo y ensalada o postre.',
-          },
-        });
-      }
-
-      if (finalItems.filter((it: any) => it.type === 'activity').length < 3) {
-        const afternoonCost = input.budget === 'budget' ? 0 : input.budget === 'premium' ? 18000 : 8000;
-        finalItems.push({
-          type: 'transfer',
-          data: {
-            id: `tr-${dayNumber}-${actCounter}`,
-            text: 'Traslado o paseo escénico hacia mirador o sector cultural · 15 min',
-            icon: '🚌',
-          },
-        });
-        finalItems.push({
-          type: 'activity',
-          data: {
-            id: `act-${dayNumber}-${actCounter++}`,
-            timeRange: '15:30 - 17:30',
-            startTime: '15:30',
-            endTime: '17:30',
-            title: `Mirador Panorámico y Paseo Cultural de ${destClean}`,
-            description: `Recorrido por talleres de artesanía, galerías independientes y mirador con vistas a la geografía del lugar.`,
-            costAmount: afternoonCost,
-            costText: afternoonCost === 0 ? 'Gratis' : `$${afternoonCost.toLocaleString('es-CL')} CLP`,
-            category: 'Cultura & Paisaje',
-            categoryIcon: '🌄',
-            isFood: false,
-            whyIncluded: 'Vistas panorámicas y exploración cultural de tarde.',
-            history: 'Punto de encuentro de artistas y cronistas locales.',
-            historicalFacts: ['Espacio público protegido para el esparcimiento ciudadano.'],
-            curiosity: 'Excelente punto para capturar fotografías con la mejor luz del atardecer.',
-            architectureOrHeritage: 'Paseo patrimonial con miradores y pasajes históricos.',
-            savingTip: 'Acceso peatonal libre y mirador público gratuito.',
-          },
-        });
-      }
-
-      if (finalItems.filter((it: any) => it.type === 'activity').length < 4) {
-        const dinnerCost = input.budget === 'budget' ? 8500 : input.budget === 'premium' ? 36000 : 18000;
-        finalItems.push({
-          type: 'transfer',
-          data: {
-            id: `tr-${dayNumber}-${actCounter}`,
-            text: 'Caminata hacia el paseo nocturno y café/restaurante · 12 min',
-            icon: '🚶',
-          },
-        });
-        finalItems.push({
-          type: 'activity',
-          data: {
-            id: `act-${dayNumber}-${actCounter++}`,
-            timeRange: '19:30 - 21:00',
-            startTime: '19:30',
-            endTime: '21:00',
-            title: `Cena Típica y Atardecer en ${destClean}`,
-            description: `Cierre del día con gastronomía criolla, bebidas tradicionales o música ambiental en barrio bohemio.`,
-            costAmount: dinnerCost,
-            costText: `$${dinnerCost.toLocaleString('es-CL')} CLP`,
-            category: 'Gastronomía & Ocio',
-            categoryIcon: '🍷',
-            isFood: true,
-            whyIncluded: 'Cierre distendido de la jornada con ambiente local.',
-            history: 'Barrio nocturno tradicional con casonas patrimoniales restauradas.',
-            historicalFacts: ['Antiguo sector de tertulias y encuentros ciudadanos.'],
-            curiosity: 'Iluminación nocturna cálida ideal para pasear con tranquilidad.',
-            architectureOrHeritage: 'Casona de principios del siglo XX con terrazas.',
-            savingTip: 'Aprovechar promociones de tabla para compartir o menú de noche.',
-          },
-        });
-      }
+      const emergencyItems = buildEmergencyStopsForShortDay(
+        currentActivities,
+        matchedCatalog,
+        dayNumber,
+        input.budget,
+        destinationName,
+        country,
+        isChile
+      );
+      finalItems.push(...emergencyItems);
     }
 
     const activitiesList = finalItems
@@ -1061,13 +1551,13 @@ export function normalizeCloudTripResponse(
       Math.round((Number(rawTrip.totalEstimatedCostCLP ?? rawTrip.totalCost) || 50000 * daysCount) / daysCount);
 
     return {
-      dayNumber: d.dayNumber || idx + 1,
+      dayNumber,
       dateFormatted: d.dateFormatted || formatDateSpanish(input.startDate, idx),
       dailyCost: computedDayCost,
       dailyCostCLP: computedDayCost,
-      title: d.title || `Día ${d.dayNumber || idx + 1}: Explorando ${input.destination}`,
-      summary: d.summary || 'Actividades y atracciones destacadas para este día.',
-      imageUrl: d.imageUrl,
+      title: d.title || `Día ${dayNumber}: Explorando ${destinationName}`,
+      summary: d.summary || 'Actividades y atracciones reales destacadas para este día.',
+      imageUrl: isValidHttpUrl(d.imageUrl) ? d.imageUrl.trim() : undefined,
       activities: activitiesList,
       items: finalItems,
     };
@@ -1085,7 +1575,46 @@ export function normalizeCloudTripResponse(
     for (let dayNum = normalizedDays.length + 1; dayNum <= daysCount; dayNum++) {
       const refDay = referenceSmartTrip.days[dayNum - 1];
       if (refDay) {
-        normalizedDays.push(refDay);
+        const cleanedRefItems = (refDay.items || []).map((it) => {
+          if (it.type === 'activity' && it.data) {
+            const placeName = deriveCleanPlaceName(it.data.placeName, it.data.title, destinationName);
+            const addressOrSector = it.data.addressOrSector || commune || destinationName;
+            const coordinates = normalizeCoordinates(it.data.coordinates);
+            const mapQuery = buildActivityMapQuery(
+              it.data.mapQuery,
+              placeName,
+              addressOrSector,
+              destinationName,
+              country
+            );
+            return {
+              ...it,
+              data: {
+                ...it.data,
+                placeName,
+                addressOrSector,
+                ...(coordinates ? { coordinates } : {}),
+                mapQuery,
+                imageUrl: undefined,
+                imagePhotographer: undefined,
+                imagePhotographerUrl: undefined,
+              },
+            };
+          }
+          return it;
+        });
+        const cleanedRefActivities = cleanedRefItems
+          .filter((it): it is { type: 'activity'; data: Activity } => it.type === 'activity' && Boolean(it.data))
+          .map((it) => it.data);
+
+        normalizedDays.push({
+          ...refDay,
+          imageUrl: undefined,
+          imagePhotographer: undefined,
+          imagePhotographerUrl: undefined,
+          activities: cleanedRefActivities,
+          items: cleanedRefItems,
+        });
       }
     }
   } else if (normalizedDays.length > daysCount) {
@@ -1106,25 +1635,6 @@ export function normalizeCloudTripResponse(
     input.interests
   );
 
-  const destinationName =
-    typeof rawTrip.destination === 'string' && rawTrip.destination.trim()
-      ? rawTrip.destination.split(',')[0].trim()
-      : fallbackMeta.destination;
-  const country =
-    typeof rawTrip.country === 'string' &&
-    rawTrip.country.trim() &&
-    rawTrip.country.trim().toLowerCase() !== 'internacional' &&
-    rawTrip.country.trim().toLowerCase() !== 'país correspondiente'
-      ? rawTrip.country.trim()
-      : fallbackMeta.country;
-  const region =
-    typeof rawTrip.region === 'string' && rawTrip.region.trim()
-      ? rawTrip.region.trim()
-      : fallbackMeta.region;
-  const commune =
-    typeof rawTrip.commune === 'string' && rawTrip.commune.trim()
-      ? rawTrip.commune.trim()
-      : fallbackMeta.commune;
   const avgDailyCostCLP =
     Number(rawTrip.avgDailyCostCLP) > 0
       ? Math.round(Number(rawTrip.avgDailyCostCLP))
@@ -1140,6 +1650,9 @@ export function normalizeCloudTripResponse(
 
   // Priorizar siempre la consulta meteorológica real (Open-Meteo / modelo climático verificado)
   const useLiveWeatherPriority = weatherInfo.weatherSource === 'open-meteo';
+
+  const preservedHeroImageUrl = isValidHttpUrl(rawTrip.imageUrl) ? rawTrip.imageUrl.trim() : undefined;
+  const preservedPhotoUrl = isValidHttpUrl(rawTrip.photoUrl) ? rawTrip.photoUrl.trim() : preservedHeroImageUrl;
 
   const finalTrip: Trip = {
     id: `trip-ai-${Date.now()}`,
@@ -1181,15 +1694,22 @@ export function normalizeCloudTripResponse(
       useLiveWeatherPriority || !Array.isArray(rawTrip.clothingItems) || rawTrip.clothingItems.length === 0
         ? weatherInfo.clothingItems
         : rawTrip.clothingItems,
-    imageUrl:
-      rawTrip.imageUrl ||
-      'https://images.pexels.com/photos/17808457/pexels-photo-17808457.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
+    imageUrl: preservedHeroImageUrl,
+    photoUrl: preservedPhotoUrl,
+    imagePhotographer:
+      preservedHeroImageUrl && typeof rawTrip.imagePhotographer === 'string' && rawTrip.imagePhotographer.trim()
+        ? rawTrip.imagePhotographer.trim()
+        : undefined,
+    imagePhotographerUrl:
+      preservedHeroImageUrl && isValidHttpUrl(rawTrip.imagePhotographerUrl)
+        ? rawTrip.imagePhotographerUrl.trim()
+        : undefined,
     isFavorite: false,
-    whyThisRoute: rawTrip.whyThisRoute || 'Ruta diseñada para maximizar experiencias y optimizar tiempos.',
+    whyThisRoute: rawTrip.whyThisRoute || 'Ruta diseñada para maximizar experiencias reales y optimizar tiempos.',
     savingTips:
       Array.isArray(rawTrip.savingTips) && rawTrip.savingTips.length > 0
         ? rawTrip.savingTips
-        : ['Prefiere transporte público o caminatas', 'Prueba el menú del día local'],
+        : ['Prefiere transporte público o caminatas', 'Prueba el menú del día en mercados reales'],
     days: normalizedDays,
     generatedByModel: modelName,
     aiSource: sourceEngine,
@@ -1202,14 +1722,23 @@ export function normalizeCloudTripResponse(
 
 /**
  * Lee los modelos de IA activos desde la variable de entorno ACTIVE_AI_MODELS o ENABLED_AI_MODELS.
- * Permite activar o desactivar modelos específicos (gemini, openai, openrouter).
+ * Por defecto prioriza OpenAI (gpt-6-luna) en primer lugar seguido de OpenRouter ('openai,openrouter').
+ * También acepta el alias común 'openia' normalizándolo a 'openai'.
  */
 export function getActiveAiModels(): string[] {
-  const envVal = (process.env.ACTIVE_AI_MODELS || process.env.ENABLED_AI_MODELS || 'gemini,openai,openrouter').trim();
-  return envVal
-    .split(',')
-    .map((m) => m.trim().toLowerCase())
-    .filter(Boolean);
+  const envVal = (process.env.ACTIVE_AI_MODELS || process.env.ENABLED_AI_MODELS || 'openai,openrouter').trim();
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of envVal.split(',')) {
+    const clean = raw.trim().toLowerCase();
+    if (!clean) continue;
+    const normalized = clean === 'openia' || clean === 'open_ai' || clean === 'open-ai' ? 'openai' : clean;
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      result.push(normalized);
+    }
+  }
+  return result;
 }
 
 /**
@@ -1228,10 +1757,10 @@ export function isOfflineModeEnabled(explicitOverride?: boolean): boolean {
 /**
  * Orquestador Principal de Rutas con Selección Dinámica de Modelos (ACTIVE_AI_MODELS):
  * - Consulta Clima en Vivo (Open-Meteo API + modelo climático por latitud/hemisferio)
- * - Itera en orden por los modelos activos especificados en process.env.ACTIVE_AI_MODELS:
- *     * 'gemini': Google Gemini API
- *     * 'openai': OpenAI API
- *     * 'openrouter': OpenRouter API
+ * - Itera en orden de prioridad por los modelos activos en process.env.ACTIVE_AI_MODELS (por defecto: 'openai,openrouter'):
+ *     1. 'openai': OpenAI API (primario: gpt-6-luna)
+ *     2. 'openrouter': OpenRouter API (respaldo)
+ *     3. 'gemini': Google Gemini API (solo si se activa explícitamente)
  * - En la nube de GCP el modo offline está desactivado por defecto (salvo ENABLE_OFFLINE_MODE=true o allowOffline=true).
  */
 export async function planRouteWithAI(input: PlanRouteInput, allowOffline: boolean = isOfflineModeEnabled()): Promise<Trip> {

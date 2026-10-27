@@ -20,6 +20,10 @@ export interface Activity {
   imageUrl?: string;
   imagePhotographer?: string;
   imagePhotographerUrl?: string;
+  placeName?: string;
+  addressOrSector?: string;
+  coordinates?: { lat: number; lng: number };
+  mapQuery?: string;
   isFood?: boolean;
   whyIncluded?: string;
   history?: string;
@@ -74,7 +78,7 @@ export interface Trip {
   savingTips: string[];
   whyThisRoute: string;
   generatedByModel?: string;
-  aiSource?: 'openrouter' | 'gemini' | 'synthesis';
+  aiSource?: 'openai' | 'openrouter' | 'gemini' | 'synthesis' | 'offline_local';
   destinationCountry?: string;
   isChileanDestination?: boolean;
   imagePhotographer?: string;

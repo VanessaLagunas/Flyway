@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Trip, Activity, BudgetLevel, TripDay } from '../types';
 import { ODCActivityCard } from '../odc-components/ODCActivityCard';
 import { ODCBottomSheet } from '../odc-components/ODCBottomSheet';
@@ -14,6 +14,11 @@ import {
   getPexelsPhotoForDestination,
 } from '../utils/photoUtils';
 import {
+  extractCleanPlaceName,
+  buildGoogleMapsEmbedUrl,
+  buildGoogleMapsExternalUrl,
+} from '../utils/mapUtils';
+import {
   getWeatherAndClothingForTrip,
   fetchWeatherAndClothingForTrip,
   getSeasonIcon,
@@ -21,7 +26,19 @@ import {
   BUDGET_TIER_DETAILS,
 } from '../utils/weatherUtils';
 import { generateSmartTrip } from '../utils/tripGenerator';
-import { BookOpen, Landmark, Sparkles, Clock, Shirt, CloudSun, Wallet } from 'lucide-react';
+import {
+  BookOpen,
+  Landmark,
+  Sparkles,
+  Clock,
+  Shirt,
+  CloudSun,
+  Wallet,
+  MapPin,
+  ExternalLink,
+  Navigation,
+  X,
+} from 'lucide-react';
 
 export interface ItineraryScreenProps {
   trip: Trip;
@@ -41,10 +58,13 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
   onUpdateTrip,
 }) => {
   const [activeTab, setActiveTab] = useState<TabType>('itinerary');
+  const [activeDay, setActiveDay] = useState<number>(1);
+  const [heroImgError, setHeroImgError] = useState<boolean>(false);
 
   // Modal bottom sheet states
   const [selectedDay, setSelectedDay] = useState<TripDay | null>(null);
   const [selectedActivity, setSelectedActivity] = useState<Activity | null>(null);
+  const [mapStopActivity, setMapStopActivity] = useState<Activity | null>(null);
   const [menuActivity, setMenuActivity] = useState<Activity | null>(null);
   const [timeAdjustActivity, setTimeAdjustActivity] = useState<Activity | null>(null);
   const [replaceActivity, setReplaceActivity] = useState<Activity | null>(null);
@@ -66,6 +86,25 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
   const [adjBudget, setAdjBudget] = useState<BudgetLevel>(trip.budgetLevel);
   const [adjInterests, setAdjInterests] = useState<string[]>(['culture', 'gastronomy']);
   const [adjNotes, setAdjNotes] = useState('Más actividades bajo techo el día 2');
+
+  // Reset UI & image error state whenever trip changes so stale DOM/modals never bleed across searches
+  useEffect(() => {
+    setActiveDay(1);
+    setActiveTab('itinerary');
+    setHeroImgError(false);
+    setSelectedDay(null);
+    setSelectedActivity(null);
+    setMapStopActivity(null);
+    setMenuActivity(null);
+    setTimeAdjustActivity(null);
+    setReplaceActivity(null);
+    setDeleteConfirmActivity(null);
+    setIsAdjustRouteOpen(false);
+    setAdjDest(trip.destination);
+    setAdjStart(trip.startDate);
+    setAdjEnd(trip.endDate);
+    setAdjBudget(trip.budgetLevel);
+  }, [trip.id, trip.destination, trip.imageUrl]);
 
   // Datos enriquecidos de clima, estación, vestimenta y presupuesto para el viaje actual
   const computedWeather = getWeatherAndClothingForTrip(
@@ -331,21 +370,26 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
       {/* Hero Image del Destino (Pexels) sin texto superpuesto */}
       {(() => {
         const destHeroPhoto = getPexelsPhotoForDestination(trip.destination, 0);
-        const heroImg = trip.imageUrl || destHeroPhoto.url;
+        const heroImage = !heroImgError && trip.imageUrl ? trip.imageUrl : destHeroPhoto.url;
         const heroPhotographer = trip.imagePhotographer || destHeroPhoto.photographer;
 
         return (
           <div className="w-full rounded-2xl overflow-hidden mb-4 border border-[var(--fw-border)] shadow-xs bg-white">
             <div className="w-full h-48 sm:h-56 overflow-hidden bg-stone-100">
               <img
-                src={heroImg}
+                key={heroImage}
+                src={heroImage}
                 alt={trip.destination}
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
                 onError={(e) => {
-                  const fallback = getPexelsPhotoForDestination(trip.destination, 1);
-                  if (e.currentTarget.src !== fallback.url) {
-                    e.currentTarget.src = fallback.url;
+                  if (!heroImgError && trip.imageUrl && trip.imageUrl !== destHeroPhoto.url) {
+                    setHeroImgError(true);
+                  } else {
+                    const fallback = getPexelsPhotoForDestination(trip.destination, 1);
+                    if (e.currentTarget.src !== fallback.url) {
+                      e.currentTarget.src = fallback.url;
+                    }
                   }
                 }}
               />
@@ -517,16 +561,24 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
             const activityCount = (day.items || []).filter((i) => i.type === 'activity').length;
 
             return (
-              <div key={day.dayNumber} className="mb-8" id={`day-section-${day.dayNumber}`}>
+              <div
+                key={`${trip.id}-day-${day.dayNumber}`}
+                className="mb-8"
+                id={`day-section-${day.dayNumber}`}
+              >
                 {/* Tarjeta de cabecera del Día con foto limpia arriba y texto debajo (sin superposición) */}
                 <div
                   className="mb-4 rounded-2xl overflow-hidden border border-[var(--fw-border)] shadow-xs bg-white cursor-pointer group hover:border-[#4A7C59] hover:shadow-md transition-all"
-                  onClick={() => setSelectedDay(day)}
+                  onClick={() => {
+                    setActiveDay(day.dayNumber);
+                    setSelectedDay(day);
+                  }}
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
+                      setActiveDay(day.dayNumber);
                       setSelectedDay(day);
                     }
                   }}
@@ -535,6 +587,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                 >
                   <div className="h-36 sm:h-44 w-full overflow-hidden bg-stone-100">
                     <img
+                      key={dayImage}
                       src={dayImage}
                       alt={day.title || `Día ${day.dayNumber}`}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
@@ -587,17 +640,21 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                     if (item.type === 'activity') {
                       return (
                         <ODCActivityCard
-                          key={item.data.id}
+                          key={`${trip.id}-d${day.dayNumber || activeDay}-${item.data.id}-${idx}`}
                           activity={item.data}
                           destination={trip.destination}
                           onOpenDetails={(act) => setSelectedActivity(act)}
                           onOpenMenu={(act) => openActivityMenu(act)}
+                          onViewOnMap={(act) => setMapStopActivity(act)}
                         />
                       );
                     }
                     if (item.type === 'transfer') {
                       return (
-                        <div key={item.data.id || idx} className="fw-transfer">
+                        <div
+                          key={`${trip.id}-d${day.dayNumber || activeDay}-tr-${item.data.id || idx}`}
+                          className="fw-transfer"
+                        >
                           <span>{item.data.icon}</span>
                           <span>{item.data.text}</span>
                         </div>
@@ -727,6 +784,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
               <div className="rounded-xl overflow-hidden mb-3 border border-[var(--fw-border)] bg-white">
                 <div className="fw-sheet__hero fw-img-fallback overflow-hidden mb-0">
                   <img
+                    key={dayImg}
                     src={dayImg}
                     alt={selectedDay.title || `Día ${selectedDay.dayNumber}`}
                     className="w-full h-full object-cover"
@@ -773,7 +831,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
 
                     return (
                       <div
-                        key={act.id}
+                        key={`${trip.id}-${act.id}`}
                         className="flex items-center gap-3 p-2 rounded-xl bg-white border border-[var(--fw-border)] hover:border-[#4A7C59] transition-colors cursor-pointer group"
                         onClick={() => {
                           setSelectedDay(null);
@@ -784,6 +842,7 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                       >
                         <div className="w-14 h-14 rounded-lg overflow-hidden shrink-0 relative bg-stone-100">
                           <img
+                            key={actImg}
                             src={actImg}
                             alt={act.title}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform"
@@ -835,14 +894,21 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
           const actPhoto = getPexelsPhotoForActivity(selectedActivity, trip.destination);
           const actImg = selectedActivity.imageUrl || actPhoto.url;
           const actPhotographer = selectedActivity.imagePhotographer || actPhoto.photographer;
+          const detailLocation =
+            selectedActivity.addressOrSector?.trim() ||
+            (selectedActivity.placeName?.trim() &&
+            selectedActivity.placeName.trim().toLowerCase() !== selectedActivity.title.trim().toLowerCase()
+              ? selectedActivity.placeName.trim()
+              : '');
 
           return (
             <div>
               <div className="rounded-xl overflow-hidden mb-3 border border-[var(--fw-border)] bg-white">
                 <div className="fw-sheet__hero fw-img-fallback overflow-hidden mb-0">
                   <img
+                    key={actImg}
                     src={actImg}
-                    alt={selectedActivity.title}
+                    alt={selectedActivity.placeName || selectedActivity.title}
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                     onError={(e) => {
@@ -859,13 +925,33 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                 </div>
               </div>
 
-              <p className="my-2">
+              <div className="flex items-center justify-between flex-wrap gap-2 my-2">
                 <span className={`fw-time ${selectedActivity.isFood ? 'fw-time--food' : ''}`}>
                   {selectedActivity.timeRange}
                 </span>
-              </p>
+                <button
+                  type="button"
+                  className="fw-map-btn"
+                  id="btn-detail-view-on-map"
+                  aria-label={`Ver ${selectedActivity.placeName || selectedActivity.title} en mapa`}
+                  onClick={() => {
+                    const targetAct = selectedActivity;
+                    setSelectedActivity(null);
+                    setMapStopActivity(targetAct);
+                  }}
+                >
+                  <MapPin size={13} className="shrink-0 text-[#4A7C59]" />
+                  <span>Ver en mapa</span>
+                </button>
+              </div>
 
               <h2 className="text-2xl font-bold my-1">{selectedActivity.title}</h2>
+              {detailLocation && (
+                <div className="flex items-center gap-1.5 text-xs font-semibold text-[#366447] mb-2">
+                  <MapPin size={13} className="shrink-0 text-[#4A7C59]" />
+                  <span>{detailLocation}</span>
+                </div>
+              )}
               <p className="text-base text-[var(--fw-text)] mb-3">{selectedActivity.description}</p>
 
               {selectedActivity.whyIncluded && (
@@ -934,16 +1020,123 @@ export const ItineraryScreen: React.FC<ItineraryScreenProps> = ({
                 </div>
               )}
 
-              <div className="flex justify-between items-center mt-5">
+              <div className="flex flex-wrap justify-between items-center gap-2 mt-5">
                 <span className="fw-price">{selectedActivity.costText}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="fw-map-btn"
+                    style={{ padding: '8px 14px', fontSize: '13px' }}
+                    onClick={() => {
+                      const targetAct = selectedActivity;
+                      setSelectedActivity(null);
+                      setMapStopActivity(targetAct);
+                    }}
+                  >
+                    <MapPin size={14} className="shrink-0 text-[#4A7C59]" />
+                    <span>Ver en mapa</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="btn fw-btn-outline"
+                    style={{ padding: '10px 24px' }}
+                    onClick={() => setSelectedActivity(null)}
+                  >
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </ODCBottomSheet>
+
+      {/* Hoja 1.5: Mapa Interactivo de la Parada */}
+      <ODCBottomSheet
+        isOpen={Boolean(mapStopActivity)}
+        onClose={() => setMapStopActivity(null)}
+        id="sheet-stop-map"
+      >
+        {mapStopActivity && (() => {
+          const cleanStopName = extractCleanPlaceName(mapStopActivity) || mapStopActivity.title;
+          const stopAddressLine = mapStopActivity.addressOrSector?.trim()
+            ? `${mapStopActivity.addressOrSector.trim()} · ${trip.destination}`
+            : trip.destination;
+          const embedUrl = buildGoogleMapsEmbedUrl(
+            mapStopActivity,
+            trip.destination,
+            trip.destinationCountry
+          );
+          const externalMapsUrl = buildGoogleMapsExternalUrl(
+            mapStopActivity,
+            trip.destination,
+            trip.destinationCountry
+          );
+
+          return (
+            <div>
+              {/* Cabecera del Mapa de la Parada */}
+              <div className="flex items-start justify-between gap-3 mb-3">
+                <div className="min-w-0">
+                  <div className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-[#264D33] bg-[#E1F2E2] px-2.5 py-0.5 rounded-full border border-[#C6E4C8] mb-1.5">
+                    <MapPin size={12} className="shrink-0 text-[#366447]" />
+                    <span>Ubicación de la parada</span>
+                  </div>
+                  <h2 className="text-xl sm:text-2xl font-bold m-0 text-[#1E1F19] leading-snug">
+                    {cleanStopName}
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[#556358] m-0 mt-0.5 flex items-center gap-1">
+                    <MapPin size={13} className="shrink-0 text-[#4A7C59]" />
+                    <span className="truncate">{stopAddressLine}</span>
+                  </p>
+                </div>
+
                 <button
                   type="button"
-                  className="btn fw-btn-outline"
-                  style={{ padding: '10px 24px' }}
-                  onClick={() => setSelectedActivity(null)}
+                  onClick={() => setMapStopActivity(null)}
+                  aria-label="Cerrar mapa"
+                  id="btn-close-stop-map"
+                  className="w-9 h-9 rounded-full bg-white border border-[var(--fw-border)] text-[#1E1F19] hover:bg-[#FAF8F5] flex items-center justify-center shrink-0 cursor-pointer transition-colors shadow-2xs"
                 >
-                  Cerrar
+                  <X size={18} />
                 </button>
+              </div>
+
+              {/* Mapa interactivo embebido (centrado en la parada con zoom 16) */}
+              <div className="rounded-xl overflow-hidden border border-[var(--fw-border)] bg-stone-100 shadow-xs">
+                <iframe
+                  key={`${mapStopActivity.id}-${trip.id}`}
+                  title={`Mapa de ${mapStopActivity.title}`}
+                  src={embedUrl}
+                  className="w-full h-[340px] sm:h-[400px] border-0 rounded-xl"
+                  loading="lazy"
+                  referrerPolicy="no-referrer-when-downgrade"
+                  allowFullScreen
+                />
+              </div>
+
+              {/* Barra inferior con resumen horario/costo y apertura directa en Google Maps */}
+              <div className="mt-3.5 pt-3 border-t border-[var(--fw-border)] flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`fw-time ${mapStopActivity.isFood ? 'fw-time--food' : ''}`}>
+                    {mapStopActivity.timeRange}
+                  </span>
+                  <span className="text-sm font-bold text-[#264D33]">
+                    {mapStopActivity.costText}
+                  </span>
+                </div>
+
+                <a
+                  href={externalMapsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  id="btn-open-external-google-maps"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-full bg-[#4A7C59] hover:bg-[#366447] text-white text-xs sm:text-sm font-bold no-underline transition-colors shadow-xs"
+                >
+                  <Navigation size={14} className="shrink-0" />
+                  <span>Abrir en Google Maps</span>
+                  <ExternalLink size={13} className="shrink-0 opacity-85" />
+                </a>
               </div>
             </div>
           );

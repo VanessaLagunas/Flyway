@@ -14,6 +14,18 @@ const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://auth-service:40
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://ai-service:4001';
 const CATALOG_SERVICE_URL = process.env.CATALOG_SERVICE_URL || 'http://catalog-service:4002';
 
+function getAuthServiceUrl(): string {
+  return process.env.AUTH_SERVICE_URL || AUTH_SERVICE_URL;
+}
+
+function getAiServiceUrl(): string {
+  return process.env.AI_SERVICE_URL || AI_SERVICE_URL;
+}
+
+function getCatalogServiceUrl(): string {
+  return process.env.CATALOG_SERVICE_URL || CATALOG_SERVICE_URL;
+}
+
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
@@ -58,7 +70,7 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
 
   try {
     const authRes = await fetchWithTimeout(
-      `${AUTH_SERVICE_URL}/me`,
+      `${getAuthServiceUrl()}/me`,
       {
         method: 'GET',
         headers: {
@@ -86,6 +98,10 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
 // -------------------------------------------------------------
 app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) => {
   const start = Date.now();
+  const authServiceUrl = getAuthServiceUrl();
+  const aiServiceUrl = getAiServiceUrl();
+  const catalogServiceUrl = getCatalogServiceUrl();
+
   let authHealth: any = { status: 'unknown' };
   let aiHealth: any = { status: 'unknown' };
   let catalogHealth: any = { status: 'unknown' };
@@ -93,7 +109,7 @@ app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) 
   await Promise.all([
     (async () => {
       try {
-        const r = await fetchWithTimeout(`${AUTH_SERVICE_URL}/health`, {}, 3000);
+        const r = await fetchWithTimeout(`${authServiceUrl}/health`, {}, 3000);
         authHealth = r.ok ? await r.json() : { status: `HTTP ${r.status}` };
       } catch (err: any) {
         authHealth = { status: 'unreachable', error: err.message };
@@ -101,7 +117,7 @@ app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) 
     })(),
     (async () => {
       try {
-        const r = await fetchWithTimeout(`${AI_SERVICE_URL}/health`, {}, 3000);
+        const r = await fetchWithTimeout(`${aiServiceUrl}/health`, {}, 3000);
         aiHealth = r.ok ? await r.json() : { status: `HTTP ${r.status}` };
       } catch (err: any) {
         aiHealth = { status: 'unreachable', error: err.message };
@@ -109,7 +125,7 @@ app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) 
     })(),
     (async () => {
       try {
-        const r = await fetchWithTimeout(`${CATALOG_SERVICE_URL}/health`, {}, 3000);
+        const r = await fetchWithTimeout(`${catalogServiceUrl}/health`, {}, 3000);
         catalogHealth = r.ok ? await r.json() : { status: `HTTP ${r.status}` };
       } catch (err: any) {
         catalogHealth = { status: 'unreachable', error: err.message };
@@ -122,9 +138,9 @@ app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) 
     aiHealth.status === 'ok' &&
     catalogHealth.status === 'ok';
 
-  const authInfo = { url: AUTH_SERVICE_URL, ...authHealth };
-  const aiInfo = { url: AI_SERVICE_URL, ...aiHealth };
-  const catalogInfo = { url: CATALOG_SERVICE_URL, ...catalogHealth };
+  const authInfo = { url: authServiceUrl, ...authHealth };
+  const aiInfo = { url: aiServiceUrl, ...aiHealth };
+  const catalogInfo = { url: catalogServiceUrl, ...catalogHealth };
 
   return res.json({
     status: allHealthy ? 'ok' : 'degraded',
@@ -147,10 +163,40 @@ app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) 
 // -------------------------------------------------------------
 // 2. Autenticación Local (/api/v1/auth/*)
 // -------------------------------------------------------------
+app.get('/api/v1/auth/config', async (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  const fallbackClientId = (
+    process.env.GOOGLE_CLIENT_ID ||
+    process.env.GOOGLE_CLIENT_ID_SECRET ||
+    process.env.VITE_GOOGLE_CLIENT_ID ||
+    ''
+  ).trim();
+  const fallbackConfig = {
+    googleEnabled: Boolean(fallbackClientId),
+    googleClientId: fallbackClientId,
+  };
+
+  try {
+    const authRes = await fetchWithTimeout(
+      `${getAuthServiceUrl()}/config`,
+      { method: 'GET' },
+      5000
+    );
+    if (authRes.ok) {
+      const data = await authRes.json();
+      return res.status(200).json(data);
+    }
+    return res.status(200).json(fallbackConfig);
+  } catch (err: any) {
+    console.warn('[BFF] auth-service /config no disponible, usando fallback local:', err?.message || err);
+    return res.status(200).json(fallbackConfig);
+  }
+});
+
 app.post('/api/v1/auth/register', async (req: Request, res: Response) => {
   try {
     const authRes = await fetchWithTimeout(
-      `${AUTH_SERVICE_URL}/register`,
+      `${getAuthServiceUrl()}/register`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -169,7 +215,7 @@ app.post('/api/v1/auth/register', async (req: Request, res: Response) => {
 app.post('/api/v1/auth/login', async (req: Request, res: Response) => {
   try {
     const authRes = await fetchWithTimeout(
-      `${AUTH_SERVICE_URL}/login`,
+      `${getAuthServiceUrl()}/login`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -188,7 +234,7 @@ app.post('/api/v1/auth/login', async (req: Request, res: Response) => {
 app.post('/api/v1/auth/google', async (req: Request, res: Response) => {
   try {
     const authRes = await fetchWithTimeout(
-      `${AUTH_SERVICE_URL}/google`,
+      `${getAuthServiceUrl()}/google`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -208,7 +254,7 @@ app.get('/api/v1/auth/me', async (req: Request, res: Response) => {
   try {
     const authHeader = req.headers.authorization || '';
     const authRes = await fetchWithTimeout(
-      `${AUTH_SERVICE_URL}/me`,
+      `${getAuthServiceUrl()}/me`,
       {
         method: 'GET',
         headers: { Authorization: authHeader },
@@ -227,10 +273,13 @@ app.get('/api/v1/auth/me', async (req: Request, res: Response) => {
 // 3. Itinerary Generate (/api/v1/itinerary/generate)
 // Orquestación Asíncrona:
 //  1) Solicita itinerario a http://ai-service:4001/generate
-//  2) a) Inyecta síncronamente la foto desde http://catalog-service:4002/photos?destination=...
+//  2) a) Enriquece síncronamente con fotos por destino + por parada vía POST catalog-service/photos/enrich-trip
+//        (con fallback resiliente a GET catalog-service/photos?destination=...&country=...&count=15&refresh=true)
 //     b) En segundo plano (fire-and-forget no bloqueante), dispara POST http://catalog-service:4002/destinations/upsert
 // -------------------------------------------------------------
 async function handleGenerateItinerary(req: Request, res: Response) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
   try {
     const { destination, startDate, endDate, budget, interests } = req.body || {};
 
@@ -252,7 +301,8 @@ async function handleGenerateItinerary(req: Request, res: Response) {
       payload.enableOfflineMode = req.body.enableOfflineMode;
     }
 
-    const targetAiServiceUrl = process.env.AI_SERVICE_URL || AI_SERVICE_URL;
+    const targetAiServiceUrl = getAiServiceUrl();
+    const targetCatalogServiceUrl = getCatalogServiceUrl();
     console.log(`[BFF] Enrutando generación hacia ai-service (${targetAiServiceUrl}/generate) para "${payload.destination}"`);
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -282,87 +332,188 @@ async function handleGenerateItinerary(req: Request, res: Response) {
     }
 
     const targetDestination = String(aiData.destination || payload.destination).trim();
+    const targetCountry = String(aiData.country || aiData.destinationCountry || '').trim();
 
-    // (a) Consulta síncrona de fotografía a catalog-service (Cache-Aside en PostgreSQL)
+    // (a.1) Enriquecimiento primario por destino + por parada vía POST /photos/enrich-trip
+    let enrichedViaTripEndpoint = false;
     try {
-      const photoRes = await fetchWithTimeout(
-        `${CATALOG_SERVICE_URL}/photos?destination=${encodeURIComponent(targetDestination)}&count=15`,
-        { method: 'GET' },
-        6000
+      const enrichRes = await fetchWithTimeout(
+        `${targetCatalogServiceUrl}/photos/enrich-trip`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trip: aiData, refresh: true }),
+        },
+        15000
       );
 
-      if (photoRes.ok) {
-        const photoData = (await photoRes.json()) as any;
-        const photosList: any[] = Array.isArray(photoData.photos) && photoData.photos.length > 0
-          ? photoData.photos
-          : (photoData.photo ? [photoData.photo] : []);
+      if (enrichRes.ok) {
+        const enrichPayload = (await enrichRes.json()) as any;
+        const enrichedTrip = enrichPayload?.trip || enrichPayload;
 
-        const primaryPhoto = photosList[0] || photoData.photo;
-        const resolvedPhotoUrl =
-          primaryPhoto?.url ||
-          photoData.photoUrl ||
-          photoData.photo_url ||
-          photoData.photo?.url;
-        const resolvedPhotographer =
-          primaryPhoto?.photographer ||
-          photoData.photographer ||
-          photoData.photo?.photographer;
-        const resolvedPhotographerUrl =
-          primaryPhoto?.photographerUrl ||
-          photoData.photographerUrl ||
-          photoData.photo?.photographerUrl;
+        if (enrichedTrip && typeof enrichedTrip === 'object') {
+          const resolvedPhotoUrl =
+            enrichedTrip.imageUrl ||
+            enrichedTrip.photoUrl ||
+            enrichedTrip.photo_url ||
+            aiData.imageUrl ||
+            aiData.photoUrl;
+          const resolvedPhotographer =
+            enrichedTrip.imagePhotographer ||
+            aiData.imagePhotographer ||
+            'Pexels Contributor';
+          const resolvedPhotographerUrl =
+            enrichedTrip.imagePhotographerUrl ||
+            aiData.imagePhotographerUrl ||
+            'https://www.pexels.com';
 
-        if (resolvedPhotoUrl) {
-          aiData.imageUrl = resolvedPhotoUrl;
-          aiData.photoUrl = resolvedPhotoUrl;
-          aiData.photo_url = resolvedPhotoUrl;
-          aiData.imagePhotographer = resolvedPhotographer || aiData.imagePhotographer;
-          aiData.imagePhotographerUrl = resolvedPhotographerUrl || aiData.imagePhotographerUrl;
-          aiData.photo = {
-            url: resolvedPhotoUrl,
-            photographer: resolvedPhotographer || 'Pexels Contributor',
-            photographerUrl: resolvedPhotographerUrl || 'https://www.pexels.com',
-            source: photoData.source || 'catalog-service',
-            cacheHit: Boolean(photoData.cacheHit),
-          };
+          if (resolvedPhotoUrl) {
+            aiData.imageUrl = resolvedPhotoUrl;
+            aiData.photoUrl = resolvedPhotoUrl;
+            aiData.photo_url = resolvedPhotoUrl;
+            aiData.imagePhotographer = resolvedPhotographer;
+            aiData.imagePhotographerUrl = resolvedPhotographerUrl;
+            aiData.photo = enrichedTrip.photo || {
+              url: resolvedPhotoUrl,
+              photographer: resolvedPhotographer,
+              photographerUrl: resolvedPhotographerUrl,
+              source: enrichPayload?.source || 'pexels_api',
+              cacheHit: false,
+            };
+          }
+
+          if (Array.isArray(enrichedTrip.days)) {
+            aiData.days = enrichedTrip.days;
+          }
 
           if (aiData.trip && typeof aiData.trip === 'object') {
-            aiData.trip.imageUrl = resolvedPhotoUrl;
-            aiData.trip.photoUrl = resolvedPhotoUrl;
-            aiData.trip.imagePhotographer = resolvedPhotographer || aiData.trip.imagePhotographer;
-            aiData.trip.imagePhotographerUrl = resolvedPhotographerUrl || aiData.trip.imagePhotographerUrl;
-          }
-
-          // Inyección de fotografías auténticas del destino en cada día y actividades del itinerario
-          if (Array.isArray(aiData.days) && aiData.days.length > 0 && photosList.length > 0) {
-            aiData.days.forEach((day: any, dIdx: number) => {
-              const assignedDayPhoto = photosList[(dIdx + 1) % photosList.length] || photosList[0];
-              day.imageUrl = assignedDayPhoto.url;
-              day.imagePhotographer = assignedDayPhoto.photographer || 'Pexels Contributor';
-              day.imagePhotographerUrl = assignedDayPhoto.photographerUrl || 'https://www.pexels.com';
-
-              if (Array.isArray(day.items)) {
-                day.items.forEach((item: any, iIdx: number) => {
-                  if (item.type === 'activity' && item.data) {
-                    const assignedActPhoto = photosList[(dIdx * 3 + iIdx + 2) % photosList.length] || assignedDayPhoto;
-                    item.data.imageUrl = assignedActPhoto.url;
-                    item.data.imagePhotographer = assignedActPhoto.photographer || 'Pexels Contributor';
-                    item.data.imagePhotographerUrl = assignedActPhoto.photographerUrl || 'https://www.pexels.com';
-                  }
-                });
-              }
-            });
-
-            if (aiData.trip && Array.isArray(aiData.trip.days)) {
-              aiData.trip.days = aiData.days;
+            if (resolvedPhotoUrl) {
+              aiData.trip.imageUrl = resolvedPhotoUrl;
+              aiData.trip.photoUrl = resolvedPhotoUrl;
+              aiData.trip.photo_url = resolvedPhotoUrl;
+              aiData.trip.imagePhotographer = resolvedPhotographer;
+              aiData.trip.imagePhotographerUrl = resolvedPhotographerUrl;
+            }
+            if (Array.isArray(enrichedTrip.days)) {
+              aiData.trip.days = enrichedTrip.days;
             }
           }
+
+          enrichedViaTripEndpoint = true;
         }
       } else {
-        console.warn(`[BFF] catalog-service /photos devolvió HTTP ${photoRes.status}, conservando imagen de respaldo.`);
+        console.warn(`[BFF] catalog-service /photos/enrich-trip devolvió HTTP ${enrichRes.status}, usando fallback GET /photos.`);
       }
-    } catch (photoErr: any) {
-      console.warn(`[BFF] No se pudo obtener foto desde catalog-service (${photoErr?.message || photoErr}), usando imagen de respaldo.`);
+    } catch (enrichErr: any) {
+      console.warn(`[BFF] Falló /photos/enrich-trip (${enrichErr?.message || enrichErr}), intentando fallback GET /photos.`);
+    }
+
+    // (a.2) Fallback resiliente a GET /photos ONLY si /photos/enrich-trip falló o devolvió non-OK
+    if (!enrichedViaTripEndpoint) {
+      try {
+        const photoRes = await fetchWithTimeout(
+          `${targetCatalogServiceUrl}/photos?destination=${encodeURIComponent(targetDestination)}&country=${encodeURIComponent(targetCountry)}&count=15&refresh=true`,
+          { method: 'GET' },
+          6000
+        );
+
+        if (photoRes.ok) {
+          const photoData = (await photoRes.json()) as any;
+          const photosList: any[] = Array.isArray(photoData.photos) && photoData.photos.length > 0
+            ? photoData.photos
+            : (photoData.photo ? [photoData.photo] : []);
+
+          const primaryPhoto = photosList[0] || photoData.photo;
+          const resolvedPhotoUrl =
+            primaryPhoto?.url ||
+            photoData.photoUrl ||
+            photoData.photo_url ||
+            photoData.photo?.url;
+          const resolvedPhotographer =
+            primaryPhoto?.photographer ||
+            photoData.photographer ||
+            photoData.photo?.photographer;
+          const resolvedPhotographerUrl =
+            primaryPhoto?.photographerUrl ||
+            photoData.photographerUrl ||
+            photoData.photo?.photographerUrl;
+
+          if (resolvedPhotoUrl) {
+            aiData.imageUrl = resolvedPhotoUrl;
+            aiData.photoUrl = resolvedPhotoUrl;
+            aiData.photo_url = resolvedPhotoUrl;
+            aiData.imagePhotographer = resolvedPhotographer || aiData.imagePhotographer;
+            aiData.imagePhotographerUrl = resolvedPhotographerUrl || aiData.imagePhotographerUrl;
+            aiData.photo = {
+              url: resolvedPhotoUrl,
+              photographer: resolvedPhotographer || 'Pexels Contributor',
+              photographerUrl: resolvedPhotographerUrl || 'https://www.pexels.com',
+              source: photoData.source || 'catalog-service',
+              cacheHit: Boolean(photoData.cacheHit),
+            };
+
+            if (aiData.trip && typeof aiData.trip === 'object') {
+              aiData.trip.imageUrl = resolvedPhotoUrl;
+              aiData.trip.photoUrl = resolvedPhotoUrl;
+              aiData.trip.photo_url = resolvedPhotoUrl;
+              aiData.trip.imagePhotographer = resolvedPhotographer || aiData.trip.imagePhotographer;
+              aiData.trip.imagePhotographerUrl = resolvedPhotographerUrl || aiData.trip.imagePhotographerUrl;
+            }
+
+            if (Array.isArray(aiData.days) && aiData.days.length > 0 && photosList.length > 0) {
+              let cursor = 1;
+              aiData.days.forEach((day: any) => {
+                const assignedDayPhoto = photosList[cursor % photosList.length] || photosList[0];
+                cursor++;
+                day.imageUrl = assignedDayPhoto.url;
+                day.imagePhotographer = assignedDayPhoto.photographer || 'Pexels Contributor';
+                day.imagePhotographerUrl = assignedDayPhoto.photographerUrl || 'https://www.pexels.com';
+
+                if (Array.isArray(day.items)) {
+                  day.items.forEach((item: any) => {
+                    if (item.type === 'activity' && item.data) {
+                      const assignedActPhoto = photosList[cursor % photosList.length] || assignedDayPhoto;
+                      cursor++;
+                      item.data.imageUrl = assignedActPhoto.url;
+                      item.data.imagePhotographer = assignedActPhoto.photographer || 'Pexels Contributor';
+                      item.data.imagePhotographerUrl = assignedActPhoto.photographerUrl || 'https://www.pexels.com';
+                    }
+                  });
+                }
+
+                if (Array.isArray(day.activities)) {
+                  const enrichedItems = Array.isArray(day.items)
+                    ? day.items.filter((it: any) => it.type === 'activity' && it.data).map((it: any) => it.data)
+                    : [];
+                  day.activities.forEach((act: any, actIdx: number) => {
+                    if (!act || typeof act !== 'object') return;
+                    const synced = enrichedItems[actIdx];
+                    if (synced?.imageUrl) {
+                      act.imageUrl = synced.imageUrl;
+                      act.imagePhotographer = synced.imagePhotographer;
+                      act.imagePhotographerUrl = synced.imagePhotographerUrl;
+                    } else {
+                      const assignedActPhoto = photosList[cursor % photosList.length] || assignedDayPhoto;
+                      cursor++;
+                      act.imageUrl = assignedActPhoto.url;
+                      act.imagePhotographer = assignedActPhoto.photographer || 'Pexels Contributor';
+                      act.imagePhotographerUrl = assignedActPhoto.photographerUrl || 'https://www.pexels.com';
+                    }
+                  });
+                }
+              });
+
+              if (aiData.trip && Array.isArray(aiData.trip.days)) {
+                aiData.trip.days = aiData.days;
+              }
+            }
+          }
+        } else {
+          console.warn(`[BFF] catalog-service /photos devolvió HTTP ${photoRes.status}, conservando imagen de respaldo.`);
+        }
+      } catch (photoErr: any) {
+        console.warn(`[BFF] No se pudo obtener foto desde catalog-service (${photoErr?.message || photoErr}), usando imagen de respaldo.`);
+      }
     }
 
     // (b) Disparo en segundo plano (sin bloquear el HTTP 200 al frontend) hacia /destinations/upsert
@@ -384,7 +535,7 @@ async function handleGenerateItinerary(req: Request, res: Response) {
     };
 
     void fetchWithTimeout(
-      `${CATALOG_SERVICE_URL}/destinations/upsert`,
+      `${targetCatalogServiceUrl}/destinations/upsert`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -421,7 +572,7 @@ app.get(['/api/v1/weather', '/api/weather'], async (req: Request, res: Response)
     if (req.query.startDate) params.set('startDate', String(req.query.startDate));
     if (req.query.endDate) params.set('endDate', String(req.query.endDate));
 
-    const weatherRes = await fetchWithTimeout(`${AI_SERVICE_URL}/weather?${params.toString()}`, {}, 8000);
+    const weatherRes = await fetchWithTimeout(`${getAiServiceUrl()}/weather?${params.toString()}`, {}, 8000);
     const data = await weatherRes.json();
     return res.status(weatherRes.status).json(data);
   } catch (err: any) {
@@ -438,7 +589,7 @@ app.get(['/api/v1/weather', '/api/weather'], async (req: Request, res: Response)
 // -------------------------------------------------------------
 async function handleGetDestinations(_req: Request, res: Response) {
   try {
-    const catRes = await fetchWithTimeout(`${CATALOG_SERVICE_URL}/destinations`, {}, 8000);
+    const catRes = await fetchWithTimeout(`${getCatalogServiceUrl()}/destinations`, {}, 8000);
     const data = await catRes.json();
     return res.status(catRes.status).json(data);
   } catch (err: any) {
@@ -456,7 +607,7 @@ app.get('/api/destinations', handleGetDestinations);
 app.post('/api/v1/destinations/upsert', async (req: Request, res: Response) => {
   try {
     const catRes = await fetchWithTimeout(
-      `${CATALOG_SERVICE_URL}/destinations/upsert`,
+      `${getCatalogServiceUrl()}/destinations/upsert`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -479,9 +630,18 @@ app.post('/api/v1/destinations/upsert', async (req: Request, res: Response) => {
 // 5. Photos (/api/v1/photos)
 // -------------------------------------------------------------
 async function handleGetPhotos(req: Request, res: Response) {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+
   try {
-    const destinationOrQuery = (req.query.destination as string) || (req.query.query as string) || (req.query.q as string);
-    const count = req.query.count as string;
+    const destinationOrQuery =
+      (req.query.destination as string) ||
+      (req.query.query as string) ||
+      (req.query.q as string);
+    const count = req.query.count as string | undefined;
+    const country = req.query.country as string | undefined;
+    const refresh =
+      (req.query.refresh as string | undefined) ??
+      (req.query.nocache as string | undefined);
 
     if (!destinationOrQuery) {
       return res.status(400).json({ error: 'Parámetro destination o query es requerido.' });
@@ -490,9 +650,11 @@ async function handleGetPhotos(req: Request, res: Response) {
     const params = new URLSearchParams();
     params.set('destination', destinationOrQuery);
     params.set('query', destinationOrQuery);
-    if (count) params.set('count', count);
+    if (count) params.set('count', String(count));
+    if (country) params.set('country', String(country));
+    if (refresh !== undefined) params.set('refresh', String(refresh));
 
-    const catRes = await fetchWithTimeout(`${CATALOG_SERVICE_URL}/photos?${params.toString()}`, {}, 10000);
+    const catRes = await fetchWithTimeout(`${getCatalogServiceUrl()}/photos?${params.toString()}`, {}, 10000);
     const data = await catRes.json();
     return res.status(catRes.status).json(data);
   } catch (err: any) {
@@ -513,7 +675,7 @@ app.get('/api/destination-photos', handleGetPhotos);
 app.get('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.user?.id ?? 1;
-    const catRes = await fetchWithTimeout(`${CATALOG_SERVICE_URL}/saved/${userId}`, {}, 8000);
+    const catRes = await fetchWithTimeout(`${getCatalogServiceUrl()}/saved/${userId}`, {}, 8000);
     const data = await catRes.json();
     return res.status(catRes.status).json(data);
   } catch (err: any) {
@@ -533,7 +695,7 @@ app.post('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Re
       userId,
     };
     const catRes = await fetchWithTimeout(
-      `${CATALOG_SERVICE_URL}/saved`,
+      `${getCatalogServiceUrl()}/saved`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

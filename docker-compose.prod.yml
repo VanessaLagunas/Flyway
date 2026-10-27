@@ -27,6 +27,7 @@ services:
       AI_SERVICE_URL: http://ai-service:4001
       CATALOG_SERVICE_URL: http://catalog-service:4002
       AI_SERVICE_TIMEOUT_MS: ${AI_SERVICE_TIMEOUT_MS:-210000}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     networks:
       - flyway-net
     depends_on:
@@ -72,7 +73,7 @@ services:
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
-      ACTIVE_AI_MODELS: ${ACTIVE_AI_MODELS:-gemini,openai,openrouter}
+      ACTIVE_AI_MODELS: ${ACTIVE_AI_MODELS:-openai,openrouter}
       ENABLE_OFFLINE_MODE: ${ENABLE_OFFLINE_MODE:-false}
     networks:
       - flyway-net

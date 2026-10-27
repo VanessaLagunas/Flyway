@@ -1,4 +1,4 @@
-import { Activity, Trip, TripDay } from '../types';
+import type { Activity, Trip, TripDay } from '../types';
 
 export interface PexelsPhotoMeta {
   url: string;
@@ -877,6 +877,13 @@ export function getPexelsPhotoForDestination(
 }
 
 /**
+ * Checks whether an image URL is a non-empty valid HTTP(S) URL.
+ */
+export function isValidHttpImageUrl(url?: string): url is string {
+  return typeof url === 'string' && /^https?:\/\/.+/i.test(url.trim());
+}
+
+/**
  * Returns a guaranteed Pexels photo for a day in an itinerary, ensuring uniqueness
  */
 export function getPexelsPhotoForDay(
@@ -885,10 +892,11 @@ export function getPexelsPhotoForDay(
   dayIndex = 0,
   usedUrls?: Set<string>
 ): PexelsPhotoMeta {
-  if (day.imageUrl && day.imageUrl.includes('pexels.com') && (!usedUrls || !usedUrls.has(day.imageUrl))) {
-    if (usedUrls) usedUrls.add(day.imageUrl);
+  if (isValidHttpImageUrl(day.imageUrl) && (!usedUrls || !usedUrls.has(day.imageUrl.trim()))) {
+    const cleanUrl = day.imageUrl.trim();
+    if (usedUrls) usedUrls.add(cleanUrl);
     return {
-      url: day.imageUrl,
+      url: cleanUrl,
       alt: day.title || `Día ${day.dayNumber || dayIndex + 1}`,
       photographer: day.imagePhotographer || 'Pexels Contributor',
       photographerUrl: day.imagePhotographerUrl || 'https://www.pexels.com',
@@ -903,6 +911,11 @@ export function getPexelsPhotoForDay(
     if (available) {
       usedUrls.add(available.url);
       return available;
+    }
+    const neutralAvailable = (PEXELS_DESTINATION_PHOTOS.neutral_travel || []).find((p) => !usedUrls.has(p.url));
+    if (neutralAvailable) {
+      usedUrls.add(neutralAvailable.url);
+      return neutralAvailable;
     }
   }
 
@@ -934,12 +947,13 @@ export function getPexelsPhotoForActivity(
     return null;
   };
 
-  // If activity already has a valid Pexels image and it has not yet been used
-  if (activity.imageUrl && activity.imageUrl.includes('pexels.com') && !activeUsed.has(activity.imageUrl)) {
-    activeUsed.add(activity.imageUrl);
+  // If activity already has a valid HTTP(S) image and it has not yet been used
+  if (isValidHttpImageUrl(activity.imageUrl) && !activeUsed.has(activity.imageUrl.trim())) {
+    const cleanUrl = activity.imageUrl.trim();
+    activeUsed.add(cleanUrl);
     return {
-      url: activity.imageUrl,
-      alt: activity.title || 'Actividad en Pexels',
+      url: cleanUrl,
+      alt: activity.placeName || activity.title || 'Actividad en Pexels',
       photographer: activity.imagePhotographer || 'Pexels Contributor',
       photographerUrl: activity.imagePhotographerUrl || 'https://www.pexels.com',
     };
@@ -949,7 +963,8 @@ export function getPexelsPhotoForActivity(
   const directDestMatch = pickFromPool(destPool);
   if (directDestMatch) return directDestMatch;
 
-  const title = (activity.title || '').toLowerCase();
+  const place = (activity.placeName || '').toLowerCase();
+  const title = `${place} ${(activity.title || '').toLowerCase()}`.trim();
   const desc = (activity.description || '').toLowerCase();
   const hist = (activity.history || '').toLowerCase();
   const arch = (activity.architectureOrHeritage || '').toLowerCase();
@@ -1008,6 +1023,15 @@ export function getPexelsPhotoForActivity(
     if (match) return match;
   }
 
+  // Try unused neutral travel or remaining thematic pools before repeating any URL
+  const neutralFallback = pickFromPool(PEXELS_DESTINATION_PHOTOS.neutral_travel || []);
+  if (neutralFallback) return neutralFallback;
+
+  for (const themePool of Object.values(PEXELS_HISTORICAL_THEMES)) {
+    const anyThemeMatch = pickFromPool(themePool);
+    if (anyThemeMatch) return anyThemeMatch;
+  }
+
   // Fallback to destination pool by index so it stays faithful to the chosen destination
   const indexedDest = destPool[fallbackIndex % destPool.length] || destPool[0];
   activeUsed.add(indexedDest.url);
@@ -1016,42 +1040,88 @@ export function getPexelsPhotoForActivity(
 
 /**
  * Enriches an entire Trip so that every Day and every Activity has a verified Pexels photo
- * matching the trip destination.
+ * matching the trip destination, while strictly preserving any valid backend-fetched Pexels URLs.
  */
 export function ensureTripHasPexelsPhotos(trip: Trip): Trip {
   const dest = trip.destination || 'Santiago, Chile';
   const usedUrls = new Set<string>();
 
-  // 1. Trip Hero photo
-  const heroPhoto = getPexelsPhotoForDestination(dest, 0, usedUrls);
+  // First collect all existing valid imageUrls so fallback selections never duplicate them
+  if (isValidHttpImageUrl(trip.imageUrl)) {
+    usedUrls.add(trip.imageUrl.trim());
+  }
+  for (const existingDay of trip.days || []) {
+    if (isValidHttpImageUrl(existingDay.imageUrl)) {
+      usedUrls.add(existingDay.imageUrl.trim());
+    }
+    for (const existingItem of existingDay.items || []) {
+      if (
+        existingItem.type === 'activity' &&
+        existingItem.data &&
+        isValidHttpImageUrl(existingItem.data.imageUrl)
+      ) {
+        usedUrls.add(existingItem.data.imageUrl.trim());
+      }
+    }
+  }
+
+  // 1. Trip Hero photo — preserve backend photo when valid!
+  const hasValidHero = isValidHttpImageUrl(trip.imageUrl);
+  const fallbackHero = hasValidHero ? null : getPexelsPhotoForDestination(dest, 0, usedUrls);
 
   const enrichedTrip: Trip = {
     ...trip,
-    imageUrl: heroPhoto.url,
-    imagePhotographer: trip.imagePhotographer || heroPhoto.photographer,
-    imagePhotographerUrl: trip.imagePhotographerUrl || heroPhoto.photographerUrl,
+    imageUrl: hasValidHero ? trip.imageUrl!.trim() : fallbackHero!.url,
+    imagePhotographer: hasValidHero
+      ? trip.imagePhotographer || 'Pexels'
+      : trip.imagePhotographer || fallbackHero!.photographer,
+    imagePhotographerUrl: hasValidHero
+      ? trip.imagePhotographerUrl || 'https://www.pexels.com'
+      : trip.imagePhotographerUrl || fallbackHero!.photographerUrl,
     days: (trip.days || []).map((day, dIdx) => {
-      // 2. Day Hero photo (unique for each day, matching destination)
-      const dayPhoto = getPexelsPhotoForDay(day, dest, dIdx, usedUrls);
+      // 2. Day Hero photo — preserve backend photo when valid!
+      const hasValidDay = isValidHttpImageUrl(day.imageUrl);
+      const fallbackDay = hasValidDay ? null : getPexelsPhotoForDay(day, dest, dIdx, usedUrls);
 
       return {
         ...day,
         title: day.title || `Día ${day.dayNumber}: Lo mejor de ${dest}`,
-        summary: day.summary || `Jornada diseñada con actividades culturales, gastronomía y miradores panorámicos.`,
-        imageUrl: dayPhoto.url,
-        imagePhotographer: dayPhoto.photographer,
-        imagePhotographerUrl: dayPhoto.photographerUrl,
+        summary:
+          day.summary ||
+          `Jornada diseñada con actividades culturales, gastronomía y miradores panorámicos.`,
+        imageUrl: hasValidDay ? day.imageUrl!.trim() : fallbackDay!.url,
+        imagePhotographer: hasValidDay
+          ? day.imagePhotographer || 'Pexels'
+          : day.imagePhotographer || fallbackDay!.photographer,
+        imagePhotographerUrl: hasValidDay
+          ? day.imagePhotographerUrl || 'https://www.pexels.com'
+          : day.imagePhotographerUrl || fallbackDay!.photographerUrl,
         items: (day.items || []).map((item, iIdx) => {
           if (item.type === 'activity' && item.data) {
-            const actPhoto = getPexelsPhotoForActivity(item.data, dest, usedUrls, dIdx * 4 + iIdx);
+            const hasValidAct = isValidHttpImageUrl(item.data.imageUrl);
+            const fallbackAct = hasValidAct
+              ? null
+              : getPexelsPhotoForActivity(
+                  {
+                    ...item.data,
+                    title: item.data.placeName || item.data.title,
+                  },
+                  dest,
+                  usedUrls,
+                  dIdx * 4 + iIdx
+                );
 
             return {
               ...item,
               data: {
                 ...item.data,
-                imageUrl: actPhoto.url,
-                imagePhotographer: actPhoto.photographer,
-                imagePhotographerUrl: actPhoto.photographerUrl,
+                imageUrl: hasValidAct ? item.data.imageUrl!.trim() : fallbackAct!.url,
+                imagePhotographer: hasValidAct
+                  ? item.data.imagePhotographer || 'Pexels'
+                  : item.data.imagePhotographer || fallbackAct!.photographer,
+                imagePhotographerUrl: hasValidAct
+                  ? item.data.imagePhotographerUrl || 'https://www.pexels.com'
+                  : item.data.imagePhotographerUrl || fallbackAct!.photographerUrl,
               },
             };
           }

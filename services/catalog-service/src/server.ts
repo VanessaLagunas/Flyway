@@ -5,9 +5,11 @@ import { Pool } from 'pg';
 import { DESTINATIONS_CATALOG } from './data/destinationsData';
 import {
   getPhotoWithCacheAside,
+  getCuratedFallbackPhoto,
   extractCleanDestinationName,
   normalizePhotoQueryKey,
 } from './photoService';
+import { enrichTripWithPexels } from './pexels';
 
 dotenv.config();
 dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
@@ -256,11 +258,23 @@ app.post('/destinations/upsert', async (req: Request, res: Response) => {
 
 // 3. Fotos con Patrón Cache-Aside en PostgreSQL (GET /photos?destination=... o GET /photos?query=...)
 app.get('/photos', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
   const rawQuery =
     (req.query.destination as string) ||
     (req.query.query as string) ||
     (req.query.q as string) ||
     '';
+  const country = typeof req.query.country === 'string' ? req.query.country.trim() : '';
+  const refreshStr = String(req.query.refresh || '').toLowerCase();
+  const nocacheStr = String(req.query.nocache || '').toLowerCase();
+  const bypassCache =
+    refreshStr === 'true' ||
+    refreshStr === '1' ||
+    nocacheStr === 'true' ||
+    nocacheStr === '1';
   const count = Number(req.query.count) || 4;
 
   if (!rawQuery.trim()) {
@@ -268,30 +282,103 @@ app.get('/photos', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await getPhotoWithCacheAside(pool, rawQuery, count, checkDbConnection);
+    const result = await getPhotoWithCacheAside(rawQuery, count, pool, {
+      bypassCache,
+      country,
+      checkDbFn: checkDbConnection,
+    });
     return res.status(200).json(result);
   } catch (err: any) {
     console.warn('[catalog-service] Error inesperado en GET /photos, usando fallback:', err.message);
+    const fallback = getCuratedFallbackPhoto(rawQuery, country);
     return res.status(200).json({
       success: true,
       cacheHit: false,
       source: 'curated_fallback',
       query: rawQuery,
-      queryKey: normalizePhotoQueryKey(rawQuery),
+      queryKey: normalizePhotoQueryKey(rawQuery, country),
       destinationName: extractCleanDestinationName(rawQuery),
-      photoUrl: 'https://images.pexels.com/photos/17808457/pexels-photo-17808457.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
-      photo_url: 'https://images.pexels.com/photos/17808457/pexels-photo-17808457.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
-      photographer: 'Lais Queiroz (Pexels)',
-      photographerUrl: 'https://www.pexels.com/@laisqfotografia',
-      photographer_url: 'https://www.pexels.com/@laisqfotografia',
-      photos: [
-        {
-          url: 'https://images.pexels.com/photos/17808457/pexels-photo-17808457.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940',
-          photographer: 'Lais Queiroz (Pexels)',
-          photographerUrl: 'https://www.pexels.com/@laisqfotografia',
-          alt: rawQuery,
-        },
-      ],
+      photoUrl: fallback.url,
+      photo_url: fallback.url,
+      photographer: fallback.photographer,
+      photographerUrl: fallback.photographerUrl,
+      photographer_url: fallback.photographerUrl,
+      photo: fallback,
+      photos: [fallback],
+    });
+  }
+});
+
+// 3b. Enriquecimiento completo de viaje y paradas con Pexels (POST /photos/enrich-trip)
+app.post('/photos/enrich-trip', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+
+  const rawBody = req.body;
+  if (!rawBody || typeof rawBody !== 'object') {
+    return res.status(400).json({ error: 'Se requiere un objeto trip en el body.' });
+  }
+
+  const inputTrip =
+    rawBody.destination || Array.isArray(rawBody.days)
+      ? rawBody
+      : rawBody.trip && typeof rawBody.trip === 'object'
+        ? rawBody.trip
+        : null;
+
+  if (!inputTrip) {
+    return res.status(400).json({ error: 'El payload debe incluir trip o destination/days.' });
+  }
+
+  const bypassCache = Boolean(rawBody?.refresh || rawBody?.bypassCache);
+  const hasPexelsKey = Boolean((process.env.PEXELS_API_KEY || '').trim());
+
+  try {
+    const enrichedTrip = await enrichTripWithPexels(inputTrip, { bypassCache });
+
+    if (!hasPexelsKey) {
+      const dest = String(
+        enrichedTrip?.destination || enrichedTrip?.trip?.destination || 'Santiago'
+      ).trim();
+      const country = String(
+        enrichedTrip?.country || enrichedTrip?.trip?.country || ''
+      ).trim();
+
+      try {
+        const cachedOrFallback = await getPhotoWithCacheAside(dest, 15, pool, {
+          bypassCache,
+          country,
+          checkDbFn: checkDbConnection,
+        });
+        if (cachedOrFallback?.photoUrl) {
+          enrichedTrip.imageUrl = cachedOrFallback.photoUrl;
+          enrichedTrip.photoUrl = cachedOrFallback.photoUrl;
+          enrichedTrip.photo_url = cachedOrFallback.photoUrl;
+          enrichedTrip.imagePhotographer = cachedOrFallback.photographer;
+          enrichedTrip.imagePhotographerUrl = cachedOrFallback.photographerUrl;
+          if (enrichedTrip.trip && typeof enrichedTrip.trip === 'object') {
+            enrichedTrip.trip.imageUrl = cachedOrFallback.photoUrl;
+            enrichedTrip.trip.photoUrl = cachedOrFallback.photoUrl;
+            enrichedTrip.trip.photo_url = cachedOrFallback.photoUrl;
+            enrichedTrip.trip.imagePhotographer = cachedOrFallback.photographer;
+            enrichedTrip.trip.imagePhotographerUrl = cachedOrFallback.photographerUrl;
+          }
+        }
+      } catch (fallbackErr: any) {
+        console.warn('[catalog-service] Fallback getPhotoWithCacheAside en enrich-trip:', fallbackErr?.message || fallbackErr);
+      }
+    }
+
+    return res.status(200).json({
+      trip: enrichedTrip,
+      source: hasPexelsKey ? 'pexels_api' : 'fallback',
+    });
+  } catch (err: any) {
+    console.warn('[catalog-service] Error inesperado en POST /photos/enrich-trip, retornando viaje seguro:', err?.message || err);
+    return res.status(200).json({
+      trip: inputTrip,
+      source: hasPexelsKey ? 'pexels_api' : 'fallback',
     });
   }
 });
@@ -390,7 +477,7 @@ app.post('/saved', async (req: Request, res: Response) => {
 
 export { app };
 
-if (process.env.NODE_ENV !== 'test') {
+if (process.env.NODE_ENV !== 'test' && !process.argv.some((arg) => arg.includes('test'))) {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`📦 Catalog Service corriendo en http://0.0.0.0:${PORT}`);
   });

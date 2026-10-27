@@ -50,6 +50,18 @@ spec:
                   name: flyway-config
                   key: GOOGLE_CLIENT_ID
                   optional: true
+            - name: GOOGLE_CLIENT_ID_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: flyway-secrets
+                  key: GOOGLE_CLIENT_ID
+                  optional: true
+            - name: VITE_GOOGLE_CLIENT_ID
+              valueFrom:
+                configMapKeyRef:
+                  name: flyway-config
+                  key: VITE_GOOGLE_CLIENT_ID
+                  optional: true
           resources:
             requests:
               cpu: 50m

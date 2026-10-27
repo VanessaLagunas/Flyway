@@ -20,6 +20,10 @@ data:
   AI_SERVICE_TIMEOUT_MS: "210000"
   GEMINI_MODEL: "gemini-3.8-flash"
   OPENROUTER_MODEL: "openrouter/free"
-  ACTIVE_AI_MODELS: "gemini,openai,openrouter"
+  ACTIVE_AI_MODELS: "openai,openrouter"
   ENABLE_OFFLINE_MODE: "false"
+  # Google OAuth 2.0 Web Client ID (ej: "1234567890-abcdefg.apps.googleusercontent.com")
+  # Obtener en Google Cloud Console > APIs & Services > Credentials > OAuth 2.0 Client IDs (Web application)
+  # e incluir el dominio/IP del Ingress/LoadBalancer de GKE en "Authorized JavaScript origins".
   GOOGLE_CLIENT_ID: ""
+  VITE_GOOGLE_CLIENT_ID: ""

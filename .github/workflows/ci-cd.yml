@@ -45,6 +45,7 @@ jobs:
           cd services/bff
           npm ci --legacy-peer-deps
           npm run lint
+          npm test
           npm run build
 
       - name: Instalar dependencias y Lint Auth Service
@@ -52,6 +53,7 @@ jobs:
           cd services/auth-service
           npm ci --legacy-peer-deps
           npm run lint
+          npm test
           npm run build
 
       - name: Instalar dependencias y Lint AI Service
@@ -59,6 +61,7 @@ jobs:
           cd services/ai-service
           npm ci --legacy-peer-deps
           npm run lint
+          npm test
           npm run build
 
       - name: Instalar dependencias y Lint Catalog Service
@@ -66,6 +69,7 @@ jobs:
           cd services/catalog-service
           npm ci --legacy-peer-deps
           npm run lint
+          npm test
           npm run build
 
   # -------------------------------------------------------------
@@ -152,6 +156,9 @@ jobs:
         with:
           context: ./services/frontend
           push: true
+          build-args: |
+            VITE_BFF_URL=/api/v1
+            VITE_GOOGLE_CLIENT_ID=${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID || vars.VITE_GOOGLE_CLIENT_ID || secrets.VITE_GOOGLE_CLIENT_ID || '' }}
           tags: |
             ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-frontend:latest
             ${{ env.REGISTRY }}/${{ steps.owner_lc.outputs.owner }}/flyway-frontend:${{ github.sha }}
@@ -229,12 +236,21 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Aplicar manifiestos base de Kubernetes
+        env:
+          GH_GOOGLE_CLIENT_ID: ${{ vars.GOOGLE_CLIENT_ID || secrets.GOOGLE_CLIENT_ID || vars.VITE_GOOGLE_CLIENT_ID || secrets.VITE_GOOGLE_CLIENT_ID || '' }}
         run: |
           # Asegurar existencia de flyway-secrets en el clúster para evitar fallos de inicio
           if ! kubectl get secret flyway-secrets > /dev/null 2>&1; then
             kubectl apply -f k8s/secret.example.yaml
           fi
+          SECRET_GOOGLE_CLIENT_ID=$(kubectl get secret flyway-secrets -o jsonpath='{.data.GOOGLE_CLIENT_ID}' 2>/dev/null | base64 -d 2>/dev/null || true)
+          EXISTING_GOOGLE_CLIENT_ID=$(kubectl get configmap flyway-config -o jsonpath='{.data.GOOGLE_CLIENT_ID}' 2>/dev/null || true)
           kubectl apply -f k8s/configmap.yaml
+          EFFECTIVE_GOOGLE_CLIENT_ID="${GH_GOOGLE_CLIENT_ID:-${SECRET_GOOGLE_CLIENT_ID:-$EXISTING_GOOGLE_CLIENT_ID}}"
+          if [ -n "$EFFECTIVE_GOOGLE_CLIENT_ID" ]; then
+            PATCH_JSON=$(jq -n --arg cid "$EFFECTIVE_GOOGLE_CLIENT_ID" '{data:{GOOGLE_CLIENT_ID:$cid,VITE_GOOGLE_CLIENT_ID:$cid}}')
+            kubectl patch configmap flyway-config --type merge -p "$PATCH_JSON"
+          fi
           kubectl apply -f k8s/backendconfig.yaml || true
           kubectl apply -f k8s/postgres-init-configmap.yaml
           kubectl apply -f k8s/postgres.yaml

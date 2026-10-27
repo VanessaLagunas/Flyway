@@ -27,6 +27,10 @@ export interface Activity {
   curiosity?: string; // Dato curioso o secreto que solo los guías locales conocen
   architectureOrHeritage?: string; // Detalle patrimonial o arquitectónico relevante
   savingTip?: string;
+  placeName?: string; // Nombre propio exacto del restaurante, cafetería, parque, museo, playa o hito real
+  addressOrSector?: string; // Dirección exacta o calle + barrio/comuna real
+  coordinates?: { lat: number; lng: number }; // Coordenadas reales aproximadas WGS84 del lugar específico
+  mapQuery?: string; // Consulta geográfica exacta lista para Google Maps ("<placeName>, <addressOrSector>, <destination>, <country>")
 }
 
 export interface TransferInfo {

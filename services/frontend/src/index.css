@@ -629,17 +629,48 @@ h3 { font-size: 18px; font-weight: 600; }
 .fw-activity__card .fw-activity__foot {
   flex: 1 1 100%;
   padding-left: 88px;
-  margin-top: 0;
+  margin-top: 2px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
   font-size: 13px;
 }
 
-@media (max-width: 360px) {
+@media (max-width: 440px) {
   .fw-activity__card .fw-activity__foot {
     padding-left: 0;
+    padding-top: 6px;
+    border-top: 1px solid rgba(229, 222, 208, 0.55);
   }
+}
+
+.fw-map-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--color-primary-hover);
+  background: #F4F9F4;
+  border: 1px solid #CDE5CF;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.12s ease;
+  white-space: nowrap;
+}
+
+.fw-map-btn:hover {
+  background: var(--fw-primary-soft);
+  border-color: var(--color-primary);
+  color: #1F422B;
+}
+
+.fw-map-btn:active {
+  transform: scale(0.98);
 }
 
 .fw-cost {

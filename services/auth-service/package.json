@@ -9,7 +9,7 @@
     "build": "esbuild src/server.ts --bundle --platform=node --target=node20 --format=cjs --external:pg-native --minify --outfile=dist/index.cjs",
     "start": "node --max-old-space-size=96 dist/index.cjs",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/auth.test.ts"
+    "test": "tsx --test src/auth.test.ts src/server.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
