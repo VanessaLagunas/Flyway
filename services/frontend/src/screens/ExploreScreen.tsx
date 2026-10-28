@@ -230,20 +230,41 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
     });
   };
 
+  const scrollToAdventure = () => {
+    const target =
+      document.getElementById('explore-hero-title') ||
+      document.getElementById('input-destination') ||
+      document.getElementById('explore-page');
+
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // Enfocar el input en dispositivos de escritorio sin forzar el teclado en móviles
+    const inputEl = document.getElementById('input-destination') as HTMLInputElement | null;
+    if (inputEl && typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      inputEl.focus({ preventScroll: true });
+    }
+  };
+
   const handleSelectInspo = (inspo: typeof INSPIRATION_CARDS[0]) => {
     setDestination(inspo.destination);
     setBudget(inspo.budget);
     setDestError(null);
+    scrollToAdventure();
   };
 
   const handlePickDestination = (city: string) => {
     setDestination(city);
     setDestError(null);
+    scrollToAdventure();
   };
 
   return (
     <div className="fw-page" id="explore-page">
-      <h1>Comienza tu aventura</h1>
+      <h1 id="explore-hero-title" className="scroll-mt-4">Comienza tu aventura</h1>
       <p className="fw-muted text-base mb-4">
         Cuéntanos qué buscas y armamos tu ruta personalizada con IA en minutos.
       </p>
@@ -513,7 +534,7 @@ export const ExploreScreen: React.FC<ExploreScreenProps> = ({ onPlanRoute }) => 
       </form>
 
       <div className="fw-section-title">
-        <h2>Inspírate con Pexels</h2>
+        <h2>Inspírate con flyway</h2>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
