@@ -109,10 +109,61 @@ async function requireAuth(req: AuthenticatedRequest, res: Response, next: NextF
   }
 }
 
+let isShuttingDown = false;
+
+export function setShuttingDownForTest(val: boolean): void {
+  isShuttingDown = val;
+}
+
+export function isServerShuttingDown(): boolean {
+  return isShuttingDown;
+}
+
+// -------------------------------------------------------------
+// 0. Lightweight Liveness & Readiness probe (/healthz, /api/v1/healthz)
+// Sin dependencias downstream para responder inmediatamente a Kubernetes y Load Balancers
+// -------------------------------------------------------------
+app.get(['/healthz', '/api/v1/healthz', '/api/healthz'], (_req: Request, res: Response) => {
+  if (isShuttingDown) {
+    return res.status(503).json({
+      status: 'shutting_down',
+      service: 'bff-gateway',
+    });
+  }
+  return res.status(200).json({
+    status: 'ok',
+    service: 'bff-gateway',
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Middleware de rechazo rápido durante apagado para evitar iniciar operaciones pesadas en un pod agonizante
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (isShuttingDown) {
+    res.set('Connection', 'close');
+    const p = req.path;
+    if (p === '/healthz' || p === '/api/v1/healthz' || p === '/api/healthz' || p === '/api/v1/health' || p === '/api/health') {
+      return next();
+    }
+    return res.status(503).json({
+      status: 'shutting_down',
+      error: 'Servidor en proceso de apagado gracioso. Reintente en un momento.',
+    });
+  }
+  return next();
+});
+
 // -------------------------------------------------------------
 // 1. Healthcheck (/api/v1/health)
 // -------------------------------------------------------------
 app.get(['/api/v1/health', '/api/health'], async (_req: Request, res: Response) => {
+  if (isShuttingDown) {
+    return res.status(503).json({
+      status: 'shutting_down',
+      service: 'bff-gateway',
+    });
+  }
   const start = Date.now();
   const authServiceUrl = getAuthServiceUrl();
   const aiServiceUrl = getAiServiceUrl();
@@ -740,6 +791,55 @@ app.post('/api/v1/saved', requireAuth, async (req: AuthenticatedRequest, res: Re
   }
 });
 
+export function createGracefulShutdownHandler(
+  server: {
+    close: (cb: (err?: Error) => void) => void;
+    closeIdleConnections?: () => void;
+    closeAllConnections?: () => void;
+  },
+  onExit: (code: number) => void = (code) => process.exit(code),
+  timeoutMs: number = 10000
+) {
+  let hasHandled = false;
+  return (signal: string) => {
+    if (hasHandled) {
+      console.warn(`[BFF] Señal adicional ${signal} recibida durante apagado, forzando salida inmediata.`);
+      onExit(1);
+      return;
+    }
+    hasHandled = true;
+    isShuttingDown = true;
+    console.log(`[BFF] Señal ${signal} recibida: cerrando servidor HTTP graciosamente...`);
+
+    if (typeof server.closeIdleConnections === 'function') {
+      server.closeIdleConnections();
+    }
+
+    const forceExitTimeout = setTimeout(() => {
+      console.warn(`[BFF] Timeout de apagado gracioso (${Math.round(timeoutMs / 1000)}s) superado, forzando terminación.`);
+      if (typeof server.closeAllConnections === 'function') {
+        server.closeAllConnections();
+      }
+      onExit(0);
+    }, timeoutMs);
+
+    if (forceExitTimeout.unref) {
+      forceExitTimeout.unref();
+    }
+
+    server.close((err) => {
+      clearTimeout(forceExitTimeout);
+      if (err) {
+        console.error('[BFF] Error al cerrar servidor HTTP:', err);
+        onExit(1);
+        return;
+      }
+      console.log('[BFF] Servidor HTTP cerrado correctamente.');
+      onExit(0);
+    });
+  };
+}
+
 export { app };
 
 if (process.env.NODE_ENV !== 'test' && !process.argv.some(arg => arg.includes('test'))) {
@@ -750,4 +850,8 @@ if (process.env.NODE_ENV !== 'test' && !process.argv.some(arg => arg.includes('t
   if ('requestTimeout' in server) {
     (server as any).requestTimeout = AI_SERVICE_TIMEOUT_MS + 30000;
   }
+
+  const shutdownHandler = createGracefulShutdownHandler(server);
+  process.on('SIGTERM', () => shutdownHandler('SIGTERM'));
+  process.on('SIGINT', () => shutdownHandler('SIGINT'));
 }

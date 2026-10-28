@@ -1,7 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import http from 'node:http';
 import assert from 'node:assert/strict';
-import { app, AI_SERVICE_TIMEOUT_MS } from './server';
+import { app, AI_SERVICE_TIMEOUT_MS, setShuttingDownForTest, isServerShuttingDown, createGracefulShutdownHandler } from './server';
 
 describe('BFF Server & AI Service Timeout Headroom Verification', () => {
   it('allocates sufficient upstream timeout (>= 210000ms / 3.5 min) to accommodate gpt-6-luna generations', () => {
@@ -521,3 +521,183 @@ describe('BFF Itinerary Generation, Photo Enrichment, Photos Proxy & Auth Config
     }
   });
 });
+
+describe('BFF Lightweight Healthz Probes & Graceful Shutdown', () => {
+  let bffServer: http.Server;
+  let bffUrl: string;
+
+  before(async () => {
+    setShuttingDownForTest(false);
+    await new Promise<void>((resolve) => {
+      bffServer = app.listen(0, '127.0.0.1', () => {
+        const addr = bffServer.address() as any;
+        bffUrl = `http://127.0.0.1:${addr.port}`;
+        resolve();
+      });
+    });
+  });
+
+  after(async () => {
+    setShuttingDownForTest(false);
+    await new Promise<void>((resolve) => {
+      bffServer.close(() => resolve());
+    });
+  });
+
+  it('exposes lightweight /healthz and /api/v1/healthz endpoints returning 200 without calling downstreams', async () => {
+    const origAuth = process.env.AUTH_SERVICE_URL;
+    const origAi = process.env.AI_SERVICE_URL;
+    const origCat = process.env.CATALOG_SERVICE_URL;
+
+    // Point to non-routable dummy endpoints to prove zero downstream dependencies
+    process.env.AUTH_SERVICE_URL = 'http://127.0.0.1:1';
+    process.env.AI_SERVICE_URL = 'http://127.0.0.1:1';
+    process.env.CATALOG_SERVICE_URL = 'http://127.0.0.1:1';
+
+    try {
+      for (const endpoint of ['/healthz', '/api/v1/healthz', '/api/healthz']) {
+        const res = await fetch(`${bffUrl}${endpoint}`);
+        assert.equal(res.status, 200);
+        const data = (await res.json()) as any;
+        assert.equal(data.status, 'ok');
+        assert.equal(data.service, 'bff-gateway');
+        assert.ok(typeof data.uptimeSeconds === 'number');
+        assert.ok(data.timestamp);
+      }
+    } finally {
+      if (origAuth === undefined) delete process.env.AUTH_SERVICE_URL;
+      else process.env.AUTH_SERVICE_URL = origAuth;
+      if (origAi === undefined) delete process.env.AI_SERVICE_URL;
+      else process.env.AI_SERVICE_URL = origAi;
+      if (origCat === undefined) delete process.env.CATALOG_SERVICE_URL;
+      else process.env.CATALOG_SERVICE_URL = origCat;
+    }
+  });
+
+  it('returns HTTP 503 when the server is in shutting_down state and rejects new API traffic with Connection: close', async () => {
+    try {
+      setShuttingDownForTest(true);
+      assert.equal(isServerShuttingDown(), true);
+
+      const resHealthz = await fetch(`${bffUrl}/healthz`);
+      assert.equal(resHealthz.status, 503);
+      const dataHealthz = (await resHealthz.json()) as any;
+      assert.equal(dataHealthz.status, 'shutting_down');
+
+      const resApiHealth = await fetch(`${bffUrl}/api/v1/health`);
+      assert.equal(resApiHealth.status, 503);
+      const dataApiHealth = (await resApiHealth.json()) as any;
+      assert.equal(dataApiHealth.status, 'shutting_down');
+
+      // Test that business API routes return 503 with Connection: close
+      const resApi = await fetch(`${bffUrl}/api/v1/photos?destination=Santiago`);
+      assert.equal(resApi.status, 503);
+      assert.equal(resApi.headers.get('connection'), 'close');
+      const dataApi = (await resApi.json()) as any;
+      assert.equal(dataApi.status, 'shutting_down');
+    } finally {
+      setShuttingDownForTest(false);
+    }
+  });
+
+  it('graceful shutdown handler terminates connections cleanly and triggers callback with exit code 0', async () => {
+    let closed = false;
+    let closedIdle = false;
+    let exitCode: number | null = null;
+
+    const fakeServer = {
+      closeIdleConnections() {
+        closedIdle = true;
+      },
+      close(cb: (err?: Error) => void) {
+        closed = true;
+        cb();
+      },
+    };
+
+    const handler = createGracefulShutdownHandler(fakeServer as any, (code) => {
+      exitCode = code;
+    });
+
+    handler('SIGTERM');
+
+    assert.equal(closed, true);
+    assert.equal(closedIdle, true);
+    assert.equal(exitCode, 0);
+  });
+
+  it('graceful shutdown handler triggers exit code 1 if server.close yields an error', async () => {
+    let exitCode: number | null = null;
+
+    const fakeServer = {
+      close(cb: (err?: Error) => void) {
+        cb(new Error('Forced test socket error'));
+      },
+    };
+
+    const handler = createGracefulShutdownHandler(fakeServer as any, (code) => {
+      exitCode = code;
+    });
+
+    handler('SIGTERM');
+
+    assert.equal(exitCode, 1);
+  });
+
+  it('graceful shutdown handler forces exit with code 0 if server.close hangs past timeoutMs', async () => {
+    let exitCode: number | null = null;
+    let closedAll = false;
+
+    // A fake server whose close() never executes the callback (simulating stuck connections)
+    const hangingServer = {
+      close(_cb: (err?: Error) => void) {
+        // intentionally hang
+      },
+      closeAllConnections() {
+        closedAll = true;
+      },
+    };
+
+    const handler = createGracefulShutdownHandler(
+      hangingServer as any,
+      (code) => {
+        exitCode = code;
+      },
+      30 // 30ms fast timeout for test
+    );
+
+    handler('SIGTERM');
+
+    // Wait 60ms for force exit timeout to fire
+    await new Promise((r) => setTimeout(r, 60));
+
+    assert.equal(exitCode, 0);
+    assert.equal(closedAll, true);
+  });
+
+  it('graceful shutdown handler exits with code 1 immediately upon receiving a second signal', async () => {
+    const exitCodes: number[] = [];
+
+    const hangingServer = {
+      close(_cb: (err?: Error) => void) {
+        // hang
+      },
+    };
+
+    const handler = createGracefulShutdownHandler(
+      hangingServer as any,
+      (code) => {
+        exitCodes.push(code);
+      },
+      5000
+    );
+
+    handler('SIGTERM');
+    assert.equal(exitCodes.length, 0);
+
+    // Second signal should force immediate exit with code 1
+    handler('SIGINT');
+    assert.deepEqual(exitCodes, [1]);
+  });
+});
+

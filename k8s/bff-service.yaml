@@ -16,6 +16,7 @@ spec:
     spec:
       imagePullSecrets:
         - name: ghcr-secret
+      terminationGracePeriodSeconds: 30
       containers:
         - name: bff-service
           image: ghcr.io/owner/flyway-bff:latest
@@ -76,16 +77,20 @@ spec:
               memory: 192Mi
           readinessProbe:
             httpGet:
-              path: /api/v1/health
+              path: /healthz
               port: 4000
             initialDelaySeconds: 5
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /api/v1/health
+              path: /healthz
               port: 4000
             initialDelaySeconds: 15
             periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
 ---
 apiVersion: v1
 kind: Service

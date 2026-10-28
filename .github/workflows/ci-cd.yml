@@ -265,16 +265,16 @@ jobs:
         run: |
           OWNER="${{ steps.owner_lc.outputs.owner }}"
           SHA="${{ github.sha }}"
-          kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/$OWNER/flyway-frontend:$SHA
-          kubectl set image deployment/bff-service bff-service=${{ env.REGISTRY }}/$OWNER/flyway-bff:$SHA
           kubectl set image deployment/auth-service auth-service=${{ env.REGISTRY }}/$OWNER/flyway-auth-service:$SHA
-          kubectl set image deployment/ai-service ai-service=${{ env.REGISTRY }}/$OWNER/flyway-ai-service:$SHA
           kubectl set image deployment/catalog-service catalog-service=${{ env.REGISTRY }}/$OWNER/flyway-catalog-service:$SHA
+          kubectl set image deployment/ai-service ai-service=${{ env.REGISTRY }}/$OWNER/flyway-ai-service:$SHA
+          kubectl set image deployment/bff-service bff-service=${{ env.REGISTRY }}/$OWNER/flyway-bff:$SHA
+          kubectl set image deployment/frontend frontend=${{ env.REGISTRY }}/$OWNER/flyway-frontend:$SHA
 
       - name: Verificar estado del despliegue (Rollout Status)
         run: |
-          kubectl rollout status deployment/frontend --timeout=120s
-          kubectl rollout status deployment/bff-service --timeout=120s
-          kubectl rollout status deployment/auth-service --timeout=120s
-          kubectl rollout status deployment/ai-service --timeout=120s
-          kubectl rollout status deployment/catalog-service --timeout=120s
+          kubectl rollout status deployment/auth-service --timeout=300s
+          kubectl rollout status deployment/catalog-service --timeout=300s
+          kubectl rollout status deployment/ai-service --timeout=300s
+          kubectl rollout status deployment/bff-service --timeout=300s
+          kubectl rollout status deployment/frontend --timeout=300s
