@@ -5,7 +5,7 @@ meta {
 }
 
 post {
-  url: {{base_url}}/api/v1/auth/login
+  url: http://localhost:4000/api/v1/auth/login
   body: json
   auth: none
 }
@@ -21,15 +21,15 @@ vars:post-response {
   auth_token: res.body.token
 }
 
+assert {
+  res.status: eq 200
+  res.body.token: isDefined
+  res.body.user.email: eq demo@flyway.cl
+}
+
 script:post-response {
   if (res.body && res.body.token) {
     bru.setEnvVar("auth_token", res.body.token);
     bru.setVar("auth_token", res.body.token);
   }
-}
-
-assert {
-  res.status: eq 200
-  res.body.token: isDefined
-  res.body.user.email: eq demo@flyway.cl
 }

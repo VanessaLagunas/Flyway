@@ -5,13 +5,13 @@ meta {
 }
 
 post {
-  url: {{base_url}}/api/v1/itinerary/generate
+  url: http://localhost:4000/api/v1/itinerary/generate
   body: json
   auth: none
 }
 
 headers {
-  x-offline-mode: true
+  x-offline-mode: false
 }
 
 body:json {
